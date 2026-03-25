@@ -168,6 +168,15 @@ export default function WebTutor() {
 
   const startTutor = async () => {
     if (!topic.trim()) return;
+    
+    const apiKey = getGeminiKey();
+    if (!apiKey) {
+      alert('Please configure your Gemini API key first.');
+      window.location.href = '/api';
+      return;
+    }
+    const ai = new GoogleGenAI({ apiKey });
+
     setIsStarted(true);
     setIsLoading(true);
 

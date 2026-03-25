@@ -19,8 +19,15 @@ export default function VoiceTutor() {
   const nextPlayTimeRef = useRef(0);
 
   const connect = async () => {
+    const apiKey = getGeminiKey();
+    if (!apiKey) {
+      alert('Please configure your Gemini API key first.');
+      window.location.href = '/api';
+      return;
+    }
+    const ai = new GoogleGenAI({ apiKey });
+
     setIsConnecting(true);
-    try {
       // 1. Get Microphone Access
       const stream = await navigator.mediaDevices.getUserMedia({ audio: {
         sampleRate: 16000,
