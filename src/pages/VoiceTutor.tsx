@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Mic, MicOff, Phone, PhoneOff, Volume2 } from 'lucide-react';
-
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+import { getGeminiKey } from '@/lib/apiKeys';
 
 export default function VoiceTutor() {
   const [isConnected, setIsConnected] = useState(false);

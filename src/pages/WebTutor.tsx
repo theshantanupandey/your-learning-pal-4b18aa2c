@@ -1,10 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { GoogleGenAI, Type, FunctionDeclaration } from '@google/genai';
 import { Send, ArrowLeft, BookOpen, CheckCircle, XCircle, RefreshCw, Mic, Square } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
-
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+import { getGeminiKey } from '@/lib/apiKeys';
 
 type Message = {
   role: 'user' | 'model';
