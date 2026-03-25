@@ -115,7 +115,8 @@ export default function VoiceTutor() {
 
             // Handle Transcriptions
             if (message.serverContent?.modelTurn?.parts?.[0]?.text) {
-              setTranscript(prev => [...prev, { role: 'model', text: message.serverContent!.modelTurn!.parts[0].text! }]);
+              const text = message.serverContent?.modelTurn?.parts?.[0]?.text;
+              if (text) setTranscript(prev => [...prev, { role: 'model', text }]);
             }
             
             // Note: The Live API doesn't always send input transcription back in the same way,
