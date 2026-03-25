@@ -1,0 +1,5 @@
+{
+  "name": "VidyAI - PW Guru",
+  "description": "An AI-powered educational tutor for NCERT syllabus (Class 6-10) with text and voice modes.",
+  "requestFramePermissions": ["microphone"]
+}
