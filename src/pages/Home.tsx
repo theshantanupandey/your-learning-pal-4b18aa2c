@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { BookOpen, Phone, Sparkles, GraduationCap } from 'lucide-react';
+import { BookOpen, Phone, Sparkles, GraduationCap, Settings } from 'lucide-react';
 
 export default function Home() {
   return (
@@ -60,6 +60,16 @@ export default function Home() {
                 Start Call
               </div>
             </div>
+          </Link>
+        </div>
+
+        <div className="text-center">
+          <Link
+            to="/api"
+            className="inline-flex items-center space-x-2 text-slate-500 hover:text-slate-900 transition-colors text-sm"
+          >
+            <Settings className="w-4 h-4" />
+            <span>Configure API Keys</span>
           </Link>
         </div>
       </div>

@@ -1,10 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { GoogleGenAI, Type, FunctionDeclaration } from '@google/genai';
 import { Send, ArrowLeft, BookOpen, CheckCircle, XCircle, RefreshCw, Mic, Square } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
-
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+import { getGeminiKey } from '@/lib/apiKeys';
 
 type Message = {
   role: 'user' | 'model';
@@ -169,6 +168,15 @@ export default function WebTutor() {
 
   const startTutor = async () => {
     if (!topic.trim()) return;
+    
+    const apiKey = getGeminiKey();
+    if (!apiKey) {
+      alert('Please configure your Gemini API key first.');
+      window.location.href = '/api';
+      return;
+    }
+    const ai = new GoogleGenAI({ apiKey });
+
     setIsStarted(true);
     setIsLoading(true);
 
