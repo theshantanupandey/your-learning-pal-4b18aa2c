@@ -28,6 +28,7 @@ export default function VoiceTutor() {
     const ai = new GoogleGenAI({ apiKey });
 
     setIsConnecting(true);
+    try {
       // 1. Get Microphone Access
       const stream = await navigator.mediaDevices.getUserMedia({ audio: {
         sampleRate: 16000,
