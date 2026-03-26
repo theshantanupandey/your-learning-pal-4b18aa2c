@@ -2,10 +2,14 @@ const STORAGE_KEY = 'vidyai_api_keys';
 
 export type ApiKeyConfig = {
   gemini: string;
+  fishAudio: string;
+  fishVoiceId: string;
 };
 
 const defaults: ApiKeyConfig = {
   gemini: '',
+  fishAudio: '',
+  fishVoiceId: '',
 };
 
 export function getApiKeys(): ApiKeyConfig {
@@ -23,4 +27,12 @@ export function saveApiKeys(keys: Partial<ApiKeyConfig>) {
 
 export function getGeminiKey(): string {
   return getApiKeys().gemini || (typeof process !== 'undefined' && process.env?.GEMINI_API_KEY) || '';
+}
+
+export function getFishAudioKey(): string {
+  return getApiKeys().fishAudio || '';
+}
+
+export function getFishVoiceId(): string {
+  return getApiKeys().fishVoiceId || '';
 }
