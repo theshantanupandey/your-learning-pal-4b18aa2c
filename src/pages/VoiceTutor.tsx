@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
 import { useNavigate } from 'react-router-dom';
 import { Mic, MicOff, PhoneOff, Phone } from 'lucide-react';
-import { getGeminiKey, getFishAudioKey, getFishVoiceId } from '@/lib/apiKeys';
+import { getGeminiKey, getFishAudioKey, getFishVoiceId, getVoiceModel } from '@/lib/apiKeys';
 import { synthesizeSpeech, playAudioBlob } from '@/lib/fishAudio';
 import VoiceOrb from '@/components/VoiceOrb';
 import { motion } from 'framer-motion';
@@ -45,10 +45,11 @@ export default function VoiceTutor() {
       const processor = audioCtx.createScriptProcessor(4096, 1, 1);
       processorRef.current = processor;
 
-      // Check if Fish Audio is available for TTS
+      // Check voice model preference and Fish Audio availability
+      const voiceModel = getVoiceModel();
       const fishKey = getFishAudioKey();
       const fishVoiceId = getFishVoiceId();
-      const useFishAudio = fishKey && fishVoiceId;
+      const useFishAudio = voiceModel === 'fish_audio' && !!fishKey && !!fishVoiceId;
 
       const sessionPromise = ai.live.connect({
         model: 'gemini-2.5-flash-native-audio-preview-12-2025',

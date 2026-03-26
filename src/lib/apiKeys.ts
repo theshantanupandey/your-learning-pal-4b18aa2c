@@ -1,15 +1,19 @@
 const STORAGE_KEY = 'vidyai_api_keys';
 
+export type VoiceModel = 'gemini' | 'fish_audio';
+
 export type ApiKeyConfig = {
   gemini: string;
   fishAudio: string;
   fishVoiceId: string;
+  voiceModel: VoiceModel;
 };
 
 const defaults: ApiKeyConfig = {
   gemini: '',
   fishAudio: '',
   fishVoiceId: '',
+  voiceModel: 'gemini',
 };
 
 export function getApiKeys(): ApiKeyConfig {
@@ -35,4 +39,8 @@ export function getFishAudioKey(): string {
 
 export function getFishVoiceId(): string {
   return getApiKeys().fishVoiceId || '';
+}
+
+export function getVoiceModel(): VoiceModel {
+  return getApiKeys().voiceModel || 'gemini';
 }

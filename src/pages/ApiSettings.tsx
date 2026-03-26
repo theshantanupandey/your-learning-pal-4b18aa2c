@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Key, Eye, EyeOff, Check, AlertTriangle, Volume2 } from 'lucide-react';
-import { getApiKeys, saveApiKeys } from '@/lib/apiKeys';
+import { getApiKeys, saveApiKeys, type VoiceModel } from '@/lib/apiKeys';
 
 type KeyField = {
   id: string;
@@ -10,6 +10,8 @@ type KeyField = {
   helpUrl?: string;
   helpText?: string;
   icon: typeof Key;
+  /** If set, only show this field when the voice model matches */
+  showWhenModel?: VoiceModel;
 };
 
 const fields: KeyField[] = [
@@ -30,6 +32,7 @@ const fields: KeyField[] = [
     helpUrl: 'https://fish.audio/dashboard',
     helpText: 'Fish Audio Dashboard',
     icon: Volume2,
+    showWhenModel: 'fish_audio',
   },
   {
     id: 'fishVoiceId',
@@ -39,6 +42,20 @@ const fields: KeyField[] = [
     helpUrl: 'https://fish.audio/dashboard',
     helpText: 'Fish Audio Dashboard',
     icon: Volume2,
+    showWhenModel: 'fish_audio',
+  },
+];
+
+const voiceModelOptions: { value: VoiceModel; label: string; description: string }[] = [
+  {
+    value: 'gemini',
+    label: 'Gemini Native Audio',
+    description: 'Built-in voice — no extra keys needed',
+  },
+  {
+    value: 'fish_audio',
+    label: 'Fish Audio TTS',
+    description: 'Custom cloned voice via Fish Audio API',
   },
 ];
 
@@ -57,7 +74,14 @@ export default function ApiSettings() {
     setTimeout(() => setSaved(false), 2000);
   };
 
-  const allConfigured = keys.gemini.trim().length > 0 && keys.fishAudio.trim().length > 0;
+  const isFishMode = keys.voiceModel === 'fish_audio';
+  const allConfigured =
+    keys.gemini.trim().length > 0 &&
+    (!isFishMode || (keys.fishAudio.trim().length > 0 && keys.fishVoiceId.trim().length > 0));
+
+  const visibleFields = fields.filter(
+    (f) => !f.showWhenModel || f.showWhenModel === keys.voiceModel
+  );
 
   return (
     <div className="max-w-2xl mx-auto px-6 py-12 space-y-8">
@@ -69,8 +93,8 @@ export default function ApiSettings() {
       </div>
 
       <div className="space-y-4">
-        {fields.map((field) => {
-          const value = keys[field.id as keyof typeof keys] || '';
+        {visibleFields.map((field) => {
+          const value = (keys[field.id as keyof typeof keys] as string) || '';
           const isSet = value.trim().length > 0;
           const isVisible = showKeys[field.id];
 
@@ -139,6 +163,60 @@ export default function ApiSettings() {
         })}
       </div>
 
+      {/* Voice Model Selector */}
+      <div className="bg-card rounded-2xl border border-border shadow-card overflow-hidden">
+        <div className="px-5 py-4 border-b border-border">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
+              <Volume2 className="w-4 h-4 text-primary" />
+            </div>
+            <div>
+              <h2 className="text-sm font-semibold text-foreground">Voice Generation Model</h2>
+              <p className="text-xs text-muted-foreground">Choose which TTS engine the Voice Tutor uses</p>
+            </div>
+          </div>
+        </div>
+        <div className="px-5 py-4 space-y-3">
+          {voiceModelOptions.map((option) => {
+            const isSelected = keys.voiceModel === option.value;
+            return (
+              <label
+                key={option.value}
+                className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+                  isSelected
+                    ? 'border-primary bg-primary/5 ring-1 ring-primary/20'
+                    : 'border-border hover:border-primary/40 hover:bg-muted/50'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="voiceModel"
+                  value={option.value}
+                  checked={isSelected}
+                  onChange={() =>
+                    setKeys((prev) => ({ ...prev, voiceModel: option.value }))
+                  }
+                  className="sr-only"
+                />
+                <span
+                  className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${
+                    isSelected ? 'border-primary' : 'border-muted-foreground/40'
+                  }`}
+                >
+                  {isSelected && (
+                    <span className="w-2 h-2 rounded-full bg-primary" />
+                  )}
+                </span>
+                <div>
+                  <p className="text-sm font-medium text-foreground">{option.label}</p>
+                  <p className="text-xs text-muted-foreground">{option.description}</p>
+                </div>
+              </label>
+            );
+          })}
+        </div>
+      </div>
+
       <button
         onClick={handleSave}
         className="w-full py-3 bg-primary text-primary-foreground font-semibold rounded-xl hover:bg-primary/90 transition-colors flex items-center justify-center gap-2"
@@ -159,7 +237,9 @@ export default function ApiSettings() {
           <div>
             <p className="text-sm font-medium text-destructive">Keys required</p>
             <p className="text-xs text-destructive/80 mt-0.5">
-              Both Gemini and Fish Audio keys are needed for full functionality.
+              {isFishMode
+                ? 'Gemini, Fish Audio API key, and Fish Audio Voice ID are all needed.'
+                : 'A Gemini API key is required for the tutor to work.'}
             </p>
           </div>
         </div>
