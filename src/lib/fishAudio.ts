@@ -12,13 +12,21 @@ export async function synthesizeSpeech(
     body: JSON.stringify({
       text,
       reference_id: voiceId,
+      model: 'fishaudio-32b', // Required by newer V1 API
       format: 'mp3',
       latency: 'balanced',
     }),
   });
 
   if (!response.ok) {
-    throw new Error(`Fish Audio TTS failed: ${response.status} ${response.statusText}`);
+    let errorMessage = response.statusText;
+    try {
+      const errorData = await response.json();
+      errorMessage = errorData.message || JSON.stringify(errorData);
+    } catch {
+      // Ignore JSON parse errors if the response isn't JSON
+    }
+    throw new Error(`Fish Audio TTS failed (${response.status}): ${errorMessage}`);
   }
 
   return response.blob();
