@@ -25,7 +25,7 @@ export default function VoiceTutor() {
   const connect = async () => {
     const apiKey = getGeminiKey();
     if (!apiKey) {
-      alert('Please configure your Gemini API key first.');
+      alert('A Gemini API key is required — it powers the AI conversation. The voice model setting only controls the text-to-speech output.');
       window.location.href = '/api';
       return;
     }
@@ -42,8 +42,40 @@ export default function VoiceTutor() {
       const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
       audioContextRef.current = audioCtx;
       const source = audioCtx.createMediaStreamSource(stream);
-      const processor = audioCtx.createScriptProcessor(4096, 1, 1);
-      processorRef.current = processor;
+      
+      // Use AudioWorkletNode instead of deprecated ScriptProcessorNode
+      const workletCode = `
+        class PCMProcessor extends AudioWorkletProcessor {
+          process(inputs, outputs, parameters) {
+            const input = inputs[0];
+            if (!input || !input[0]) return true;
+            
+            const inputData = input[0];
+            const pcm16 = new Int16Array(inputData.length);
+            for (let i = 0; i < inputData.length; i++) {
+              let s = Math.max(-1, Math.min(1, inputData[i]));
+              pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+            }
+            
+            const buffer = new Uint8Array(pcm16.buffer);
+            let binary = '';
+            for (let i = 0; i < buffer.byteLength; i++) {
+              binary += String.fromCharCode(buffer[i]);
+            }
+            const base64Data = btoa(binary);
+            
+            this.port.postMessage(base64Data);
+            return true;
+          }
+        }
+        registerProcessor('pcm-processor', PCMProcessor);
+      `;
+      const blob = new Blob([workletCode], { type: 'application/javascript' });
+      const workletUrl = URL.createObjectURL(blob);
+      await audioCtx.audioWorklet.addModule(workletUrl);
+      
+      const processor = new AudioWorkletNode(audioCtx, 'pcm-processor');
+      processorRef.current = processor as any; // We only need it to disconnect later
 
       // Check voice model preference and Fish Audio availability
       const voiceModel = getVoiceModel();
@@ -71,23 +103,22 @@ export default function VoiceTutor() {
             setIsConnecting(false);
             setStatus('listening');
 
-            processor.onaudioprocess = (e) => {
-              if (isMuted) return;
-              const inputData = e.inputBuffer.getChannelData(0);
-              const pcm16 = new Int16Array(inputData.length);
-              for (let i = 0; i < inputData.length; i++) {
-                let s = Math.max(-1, Math.min(1, inputData[i]));
-                pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+            processor.port.onmessage = (e) => {
+              if (isMuted || !sessionPromiseRef.current) return;
+              
+              const base64Data = e.data;
+              if (sessionPromiseRef.current) {
+                sessionPromiseRef.current.then((session: any) => {
+                  try {
+                    // Only send if we still have a session reference, preventing sends after disconnect
+                    if (sessionPromiseRef.current) {
+                      session.sendRealtimeInput([{ mimeType: 'audio/pcm;rate=16000', data: base64Data }]);
+                    }
+                  } catch (err) {
+                    console.error('Error sending audio data:', err);
+                  }
+                }).catch(() => {});
               }
-              const buffer = new Uint8Array(pcm16.buffer);
-              let binary = '';
-              for (let i = 0; i < buffer.byteLength; i++) {
-                binary += String.fromCharCode(buffer[i]);
-              }
-              const base64Data = btoa(binary);
-              sessionPromise.then((session: any) => {
-                session.sendRealtimeInput({ audio: { data: base64Data, mimeType: 'audio/pcm;rate=16000' } });
-              });
             };
 
             source.connect(processor);
@@ -183,15 +214,34 @@ export default function VoiceTutor() {
 
   const disconnect = () => {
     if (sessionPromiseRef.current) {
-      sessionPromiseRef.current.then((s: any) => s.close());
+      sessionPromiseRef.current.then((session: any) => {
+        try {
+          if (session && typeof session.close === 'function') {
+            session.close();
+          }
+        } catch (e) {
+          console.error("Error closing session", e);
+        }
+      }).catch(() => {});
       sessionPromiseRef.current = null;
     }
-    processorRef.current?.disconnect();
-    processorRef.current = null;
-    mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
-    mediaStreamRef.current = null;
-    audioContextRef.current?.close();
-    audioContextRef.current = null;
+    
+    if (processorRef.current) {
+      processorRef.current.disconnect();
+      processorRef.current.onaudioprocess = null; // Remove the event listener to immediately stop processing
+      processorRef.current = null;
+    }
+    
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((t) => t.stop());
+      mediaStreamRef.current = null;
+    }
+    
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+      audioContextRef.current.close().catch(() => {});
+      audioContextRef.current = null;
+    }
+    
     setIsConnected(false);
     setIsConnecting(false);
     setStatus('idle');
