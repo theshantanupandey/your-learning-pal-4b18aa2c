@@ -61,9 +61,10 @@ export default function TutorPage() {
         body: JSON.stringify({ message: msg, history: updated.slice(-10), topicContext: context }),
       });
       const data = await res.json();
-      setMessages(prev => [...prev, { role: 'tutor', content: data.response }]);
-      if (isVoiceMode) await speak(data.response.replace(/[*#_`]/g, ''), { rate: 0.95 });
-    } catch { setMessages(prev => [...prev, { role: 'tutor', content: 'Error. Please try again.' }]); }
+      const reply = data.response || data.error || 'No response received.';
+      setMessages(prev => [...prev, { role: 'tutor', content: reply }]);
+      if (isVoiceMode) await speak(reply.replace(/[*#_`]/g, ''), { rate: 0.95 });
+    } catch (err) { setMessages(prev => [...prev, { role: 'tutor', content: 'Network error. Please check your connection.' }]); }
     setIsLoading(false);
   };
 

@@ -1,7 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
-
 const SYSTEM_PROMPT = `You are Taksh, an expert NCERT tutor for Indian students in Classes 6-10. You teach like the best school teachers in India — patient, encouraging, and thorough.
 
 ## Teaching Style:
@@ -31,27 +29,69 @@ export async function POST(request) {
     const { message, history = [], topicContext } = await request.json();
 
     if (!process.env.GEMINI_API_KEY) {
-      // Demo mode — return a simulated response
       return Response.json({
         response: getDemoResponse(message, topicContext),
         mode: 'demo',
       });
     }
 
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
     const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
-    // Build chat history
-    const chatHistory = history.map(msg => ({
-      role: msg.role === 'tutor' ? 'model' : 'user',
-      parts: [{ text: msg.content }],
-    }));
+    // Sanitize history: Gemini requires alternating user/model roles
+    // and the first message must be from user
+    const sanitized = [];
+    for (const msg of history) {
+      const role = msg.role === 'tutor' ? 'model' : 'user';
+      const last = sanitized[sanitized.length - 1];
+
+      // Skip if same role as previous (merge or skip)
+      if (last && last.role === role) {
+        // Merge content into previous message
+        last.parts[0].text += '\n' + msg.content;
+        continue;
+      }
+
+      sanitized.push({
+        role,
+        parts: [{ text: msg.content }],
+      });
+    }
+
+    // Gemini requires history to start with 'user' role
+    // Remove leading 'model' messages
+    while (sanitized.length > 0 && sanitized[0].role === 'model') {
+      sanitized.shift();
+    }
+
+    // Remove the last entry if it's the current user message (we send it separately)
+    if (sanitized.length > 0 && sanitized[sanitized.length - 1].role === 'user') {
+      const lastUserText = sanitized[sanitized.length - 1].parts[0].text;
+      if (lastUserText.includes(message)) {
+        sanitized.pop();
+      }
+    }
+
+    // Ensure history still alternates after cleanup
+    // If it ends with 'user', that's fine for startChat, but let's be safe
+    const cleanHistory = [];
+    for (const entry of sanitized) {
+      const last = cleanHistory[cleanHistory.length - 1];
+      if (last && last.role === entry.role) continue; // skip duplicates
+      cleanHistory.push(entry);
+    }
+
+    // Must start with user
+    while (cleanHistory.length > 0 && cleanHistory[0].role === 'model') {
+      cleanHistory.shift();
+    }
 
     const contextPrefix = topicContext
       ? `[Context: The student is studying ${topicContext.subject}, Class ${topicContext.classNumber}, Chapter: "${topicContext.chapterName}", Topic: "${topicContext.topicName}"]\n\n`
       : '';
 
     const chat = model.startChat({
-      history: chatHistory,
+      history: cleanHistory,
       systemInstruction: SYSTEM_PROMPT,
     });
 
@@ -60,11 +100,22 @@ export async function POST(request) {
 
     return Response.json({ response, mode: 'ai' });
   } catch (error) {
-    console.error('Chat API error:', error);
-    return Response.json(
-      { error: 'Failed to get response', details: error.message },
-      { status: 500 }
-    );
+    console.error('Chat API error:', error.message || error);
+
+    // On Gemini errors, fall back to demo response
+    try {
+      const { message, topicContext } = await request.clone().json();
+      return Response.json({
+        response: getDemoResponse(message, topicContext),
+        mode: 'demo',
+        error: error.message,
+      });
+    } catch {
+      return Response.json(
+        { response: "I'm having trouble connecting right now. Please try again in a moment.", mode: 'error' },
+        { status: 200 }
+      );
+    }
   }
 }
 
