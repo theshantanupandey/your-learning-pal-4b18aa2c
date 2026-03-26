@@ -1,119 +1,169 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
-import { ArrowLeft, Key, Eye, EyeOff, Check, AlertTriangle } from 'lucide-react';
+import { Key, Eye, EyeOff, Check, AlertTriangle, Volume2 } from 'lucide-react';
 import { getApiKeys, saveApiKeys } from '@/lib/apiKeys';
 
+type KeyField = {
+  id: string;
+  label: string;
+  sublabel: string;
+  placeholder: string;
+  helpUrl?: string;
+  helpText?: string;
+  icon: typeof Key;
+};
+
+const fields: KeyField[] = [
+  {
+    id: 'gemini',
+    label: 'Google Gemini API',
+    sublabel: 'Powers AI tutoring (chat & voice)',
+    placeholder: 'AIzaSy...',
+    helpUrl: 'https://aistudio.google.com/apikey',
+    helpText: 'Google AI Studio',
+    icon: Key,
+  },
+  {
+    id: 'fishAudio',
+    label: 'Fish Audio API',
+    sublabel: 'Cloned voice TTS for Voice Tutor',
+    placeholder: 'sk-...',
+    helpUrl: 'https://fish.audio/dashboard',
+    helpText: 'Fish Audio Dashboard',
+    icon: Volume2,
+  },
+  {
+    id: 'fishVoiceId',
+    label: 'Fish Audio Voice ID',
+    sublabel: 'The cloned voice model to use',
+    placeholder: 'e.g. a1b2c3d4...',
+    helpUrl: 'https://fish.audio/dashboard',
+    helpText: 'Fish Audio Dashboard',
+    icon: Volume2,
+  },
+];
+
 export default function ApiSettings() {
-  const [geminiKey, setGeminiKey] = useState('');
-  const [showKey, setShowKey] = useState(false);
+  const [keys, setKeys] = useState(getApiKeys());
+  const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    const keys = getApiKeys();
-    setGeminiKey(keys.gemini);
+    setKeys(getApiKeys());
   }, []);
 
   const handleSave = () => {
-    saveApiKeys({ gemini: geminiKey });
+    saveApiKeys(keys);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
 
-  const isConfigured = geminiKey.trim().length > 0;
+  const allConfigured = keys.gemini.trim().length > 0 && keys.fishAudio.trim().length > 0;
 
   return (
-    <div className="min-h-screen bg-slate-50 p-6">
-      <div className="max-w-2xl mx-auto space-y-8">
-        <Link to="/" className="inline-flex items-center text-slate-500 hover:text-slate-900 transition-colors">
-          <ArrowLeft className="w-4 h-4 mr-2" /> Back to Home
-        </Link>
-
-        <div className="space-y-2">
-          <h1 className="text-3xl font-bold text-slate-900">API Configuration</h1>
-          <p className="text-slate-500">
-            Add your API keys below. Keys are stored locally in your browser and never sent to any server.
-          </p>
-        </div>
-
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="p-6 border-b border-slate-100 flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center">
-                <Key className="w-5 h-5 text-blue-600" />
-              </div>
-              <div>
-                <h2 className="font-semibold text-slate-900">Google Gemini API</h2>
-                <p className="text-sm text-slate-500">Powers both Web Tutor and Voice Tutor</p>
-              </div>
-            </div>
-            <div className={`px-3 py-1 rounded-full text-xs font-medium ${
-              isConfigured
-                ? 'bg-green-50 text-green-700 border border-green-200'
-                : 'bg-amber-50 text-amber-700 border border-amber-200'
-            }`}>
-              {isConfigured ? 'Configured' : 'Not set'}
-            </div>
-          </div>
-
-          <div className="p-6 space-y-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">API Key</label>
-              <div className="relative">
-                <input
-                  type={showKey ? 'text' : 'password'}
-                  value={geminiKey}
-                  onChange={e => setGeminiKey(e.target.value)}
-                  placeholder="AIzaSy..."
-                  className="w-full p-3 pr-12 rounded-xl border border-slate-200 bg-slate-50 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none font-mono text-sm"
-                />
-                <button
-                  onClick={() => setShowKey(!showKey)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                >
-                  {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-              <p className="text-xs text-slate-400">
-                Get your key from{' '}
-                <a
-                  href="https://aistudio.google.com/apikey"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-blue-500 underline hover:text-blue-700"
-                >
-                  Google AI Studio
-                </a>
-              </p>
-            </div>
-
-            <button
-              onClick={handleSave}
-              className="w-full py-3 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition-colors flex items-center justify-center space-x-2"
-            >
-              {saved ? (
-                <>
-                  <Check className="w-4 h-4" />
-                  <span>Saved!</span>
-                </>
-              ) : (
-                <span>Save Key</span>
-              )}
-            </button>
-          </div>
-        </div>
-
-        {!isConfigured && (
-          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start space-x-3">
-            <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
-            <div>
-              <p className="text-sm font-medium text-amber-800">API key required</p>
-              <p className="text-sm text-amber-700 mt-1">
-                You need a Gemini API key to use VidyAI. The Web Tutor and Voice Tutor won't work without it.
-              </p>
-            </div>
-          </div>
-        )}
+    <div className="max-w-2xl mx-auto px-6 py-12 space-y-8">
+      <div className="space-y-1">
+        <h1 className="text-2xl font-bold text-foreground">API Configuration</h1>
+        <p className="text-sm text-muted-foreground">
+          Keys are stored locally in your browser and never sent to any server.
+        </p>
       </div>
+
+      <div className="space-y-4">
+        {fields.map((field) => {
+          const value = keys[field.id as keyof typeof keys] || '';
+          const isSet = value.trim().length > 0;
+          const isVisible = showKeys[field.id];
+
+          return (
+            <div
+              key={field.id}
+              className="bg-card rounded-2xl border border-border shadow-card overflow-hidden"
+            >
+              <div className="px-5 py-4 border-b border-border flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
+                    <field.icon className="w-4 h-4 text-primary" />
+                  </div>
+                  <div>
+                    <h2 className="text-sm font-semibold text-foreground">{field.label}</h2>
+                    <p className="text-xs text-muted-foreground">{field.sublabel}</p>
+                  </div>
+                </div>
+                <span
+                  className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                    isSet
+                      ? 'bg-success/10 text-success'
+                      : 'bg-destructive/10 text-destructive'
+                  }`}
+                >
+                  {isSet ? 'Set' : 'Missing'}
+                </span>
+              </div>
+
+              <div className="px-5 py-4 space-y-2">
+                <div className="relative">
+                  <input
+                    type={isVisible ? 'text' : 'password'}
+                    value={value}
+                    onChange={(e) =>
+                      setKeys((prev) => ({ ...prev, [field.id]: e.target.value }))
+                    }
+                    placeholder={field.placeholder}
+                    className="w-full px-3 py-2.5 pr-10 rounded-xl border border-border bg-muted text-sm font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all"
+                  />
+                  <button
+                    onClick={() =>
+                      setShowKeys((prev) => ({ ...prev, [field.id]: !prev[field.id] }))
+                    }
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    {isVisible ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                {field.helpUrl && (
+                  <p className="text-xs text-muted-foreground">
+                    Get yours from{' '}
+                    <a
+                      href={field.helpUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary underline hover:text-primary/80"
+                    >
+                      {field.helpText}
+                    </a>
+                  </p>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <button
+        onClick={handleSave}
+        className="w-full py-3 bg-primary text-primary-foreground font-semibold rounded-xl hover:bg-primary/90 transition-colors flex items-center justify-center gap-2"
+      >
+        {saved ? (
+          <>
+            <Check className="w-4 h-4" />
+            Saved!
+          </>
+        ) : (
+          'Save All Keys'
+        )}
+      </button>
+
+      {!allConfigured && (
+        <div className="bg-destructive/5 border border-destructive/20 rounded-xl p-4 flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 text-destructive mt-0.5 shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-destructive">Keys required</p>
+            <p className="text-xs text-destructive/80 mt-0.5">
+              Both Gemini and Fish Audio keys are needed for full functionality.
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,15 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
-import { Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Mic, MicOff, Phone, PhoneOff, Volume2 } from 'lucide-react';
-import { getGeminiKey } from '@/lib/apiKeys';
+import { useNavigate } from 'react-router-dom';
+import { Mic, MicOff, PhoneOff, Phone } from 'lucide-react';
+import { getGeminiKey, getFishAudioKey, getFishVoiceId } from '@/lib/apiKeys';
+import { synthesizeSpeech, playAudioBlob } from '@/lib/fishAudio';
+import VoiceOrb from '@/components/VoiceOrb';
+import { motion } from 'framer-motion';
 
 export default function VoiceTutor() {
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
-  const [transcript, setTranscript] = useState<{role: string, text: string}[]>([]);
-  
+  const [status, setStatus] = useState<'idle' | 'connecting' | 'listening' | 'speaking'>('idle');
+  const [transcript, setTranscript] = useState<{ role: string; text: string }[]>([]);
+
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
@@ -26,35 +30,37 @@ export default function VoiceTutor() {
       return;
     }
     const ai = new GoogleGenAI({ apiKey });
-
     setIsConnecting(true);
+    setStatus('connecting');
+
     try {
-      // 1. Get Microphone Access
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: {
-        sampleRate: 16000,
-        channelCount: 1,
-        echoCancellation: true,
-        noiseSuppression: true,
-      } });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true },
+      });
       mediaStreamRef.current = stream;
 
-      // 2. Setup Audio Context
       const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
       audioContextRef.current = audioCtx;
-
       const source = audioCtx.createMediaStreamSource(stream);
       const processor = audioCtx.createScriptProcessor(4096, 1, 1);
       processorRef.current = processor;
 
-      // 3. Connect to Live API
+      // Check if Fish Audio is available for TTS
+      const fishKey = getFishAudioKey();
+      const fishVoiceId = getFishVoiceId();
+      const useFishAudio = fishKey && fishVoiceId;
+
       const sessionPromise = ai.live.connect({
-        model: "gemini-2.5-flash-native-audio-preview-12-2025",
+        model: 'gemini-2.5-flash-native-audio-preview-12-2025',
         config: {
-          responseModalities: [Modality.AUDIO],
-          speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: "Aoede" } }, // Friendly voice
-          },
-          systemInstruction: "You are VidyAI, a friendly and patient NCERT tutor for Class 6-10 students in India. You are talking to a student over a phone call. Keep your responses short, conversational, and engaging. Ask questions to check their understanding. Do not use markdown or lists, just speak naturally. Start by asking for their name, class, and what subject they want to learn today.",
+          responseModalities: useFishAudio ? [Modality.TEXT] : [Modality.AUDIO],
+          ...(!useFishAudio && {
+            speechConfig: {
+              voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Aoede' } },
+            },
+          }),
+          systemInstruction:
+            'You are VidyAI, a friendly and patient NCERT tutor for Class 6-10 students in India. You are talking to a student over a phone call. Keep responses short, conversational, and engaging. Ask questions to check understanding. Do not use markdown or lists, just speak naturally. Start by asking for their name, class, and what subject they want to learn today.',
           inputAudioTranscription: {},
           outputAudioTranscription: {},
         },
@@ -62,31 +68,24 @@ export default function VoiceTutor() {
           onopen: () => {
             setIsConnected(true);
             setIsConnecting(false);
-            
-            // Start sending audio
+            setStatus('listening');
+
             processor.onaudioprocess = (e) => {
               if (isMuted) return;
-              
               const inputData = e.inputBuffer.getChannelData(0);
-              // Convert Float32 to Int16
               const pcm16 = new Int16Array(inputData.length);
               for (let i = 0; i < inputData.length; i++) {
                 let s = Math.max(-1, Math.min(1, inputData[i]));
-                pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
               }
-              
-              // Base64 encode
               const buffer = new Uint8Array(pcm16.buffer);
               let binary = '';
               for (let i = 0; i < buffer.byteLength; i++) {
                 binary += String.fromCharCode(buffer[i]);
               }
               const base64Data = btoa(binary);
-
               sessionPromise.then((session: any) => {
-                session.sendRealtimeInput({
-                  audio: { data: base64Data, mimeType: 'audio/pcm;rate=16000' }
-                });
+                session.sendRealtimeInput({ audio: { data: base64Data, mimeType: 'audio/pcm;rate=16000' } });
               });
             };
 
@@ -94,217 +93,168 @@ export default function VoiceTutor() {
             processor.connect(audioCtx.destination);
           },
           onmessage: async (message: LiveServerMessage) => {
-            // Handle audio output
+            // Handle native audio output (when not using Fish Audio)
             const base64Audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
             if (base64Audio) {
+              setStatus('speaking');
               const binaryString = atob(base64Audio);
               const bytes = new Uint8Array(binaryString.length);
               for (let i = 0; i < binaryString.length; i++) {
                 bytes[i] = binaryString.charCodeAt(i);
               }
-              
-              // Convert Int16 to Float32
               const int16Array = new Int16Array(bytes.buffer);
               const float32Array = new Float32Array(int16Array.length);
               for (let i = 0; i < int16Array.length; i++) {
-                float32Array[i] = int16Array[i] / (int16Array[i] < 0 ? 0x8000 : 0x7FFF);
+                float32Array[i] = int16Array[i] / (int16Array[i] < 0 ? 0x8000 : 0x7fff);
               }
-              
               playbackQueueRef.current.push(float32Array);
               playNextAudio();
             }
 
-            // Handle interruption
             if (message.serverContent?.interrupted) {
               playbackQueueRef.current = [];
               isPlayingRef.current = false;
+              setStatus('listening');
             }
 
-            // Handle Transcriptions
-            if (message.serverContent?.modelTurn?.parts?.[0]?.text) {
-              const text = message.serverContent?.modelTurn?.parts?.[0]?.text;
-              if (text) setTranscript(prev => [...prev, { role: 'model', text }]);
+            // Handle text transcription & Fish Audio TTS
+            const textContent = message.serverContent?.modelTurn?.parts?.[0]?.text;
+            if (textContent) {
+              setTranscript((prev) => [...prev, { role: 'model', text: textContent }]);
+
+              // If Fish Audio is configured, use it for TTS
+              if (useFishAudio) {
+                setStatus('speaking');
+                try {
+                  const blob = await synthesizeSpeech(textContent, fishVoiceId, fishKey);
+                  await playAudioBlob(blob);
+                } catch (err) {
+                  console.error('Fish Audio TTS error:', err);
+                }
+                setStatus('listening');
+              }
             }
-            
-            // Note: The Live API doesn't always send input transcription back in the same way,
-            // but if it does, it would be handled here.
           },
           onerror: (error) => {
-            console.error("Live API Error:", error);
+            console.error('Live API Error:', error);
             disconnect();
           },
-          onclose: () => {
-            disconnect();
-          }
-        }
+          onclose: () => disconnect(),
+        },
       });
 
       sessionPromiseRef.current = sessionPromise;
-
-    } catch (error) {
-      console.error("Failed to connect:", error);
+    } catch {
       setIsConnecting(false);
-      alert("Could not access microphone or connect to AI. Please check permissions.");
+      setStatus('idle');
+      alert('Could not access microphone or connect to AI.');
     }
   };
 
   const playNextAudio = () => {
     if (!audioContextRef.current || playbackQueueRef.current.length === 0) return;
-    
     const audioCtx = audioContextRef.current;
-    if (audioCtx.state === 'suspended') {
-      audioCtx.resume();
-    }
+    if (audioCtx.state === 'suspended') audioCtx.resume();
 
     const bufferData = playbackQueueRef.current.shift()!;
-    const audioBuffer = audioCtx.createBuffer(1, bufferData.length, 24000); // Output is 24kHz
+    const audioBuffer = audioCtx.createBuffer(1, bufferData.length, 24000);
     audioBuffer.getChannelData(0).set(bufferData);
 
-    const source = audioCtx.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(audioCtx.destination);
+    const src = audioCtx.createBufferSource();
+    src.buffer = audioBuffer;
+    src.connect(audioCtx.destination);
 
     const currentTime = audioCtx.currentTime;
     const startTime = Math.max(currentTime, nextPlayTimeRef.current);
-    
-    source.start(startTime);
+    src.start(startTime);
     nextPlayTimeRef.current = startTime + audioBuffer.duration;
 
-    source.onended = () => {
+    src.onended = () => {
       if (playbackQueueRef.current.length > 0) {
         playNextAudio();
       } else {
         isPlayingRef.current = false;
+        setStatus('listening');
       }
     };
-    
     isPlayingRef.current = true;
   };
 
   const disconnect = () => {
     if (sessionPromiseRef.current) {
-      sessionPromiseRef.current.then((session: any) => session.close());
+      sessionPromiseRef.current.then((s: any) => s.close());
       sessionPromiseRef.current = null;
     }
-    if (processorRef.current) {
-      processorRef.current.disconnect();
-      processorRef.current = null;
-    }
-    if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach(track => track.stop());
-      mediaStreamRef.current = null;
-    }
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
-      audioContextRef.current = null;
-    }
+    processorRef.current?.disconnect();
+    processorRef.current = null;
+    mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
+    mediaStreamRef.current = null;
+    audioContextRef.current?.close();
+    audioContextRef.current = null;
     setIsConnected(false);
     setIsConnecting(false);
+    setStatus('idle');
     setTranscript([]);
     playbackQueueRef.current = [];
     nextPlayTimeRef.current = 0;
   };
 
-  useEffect(() => {
-    return () => {
-      disconnect();
-    };
-  }, []);
+  useEffect(() => () => disconnect(), []);
 
   return (
-    <div className="min-h-screen bg-slate-900 flex flex-col text-white">
-      <header className="p-6 flex items-center justify-between">
-        <Link to="/" className="p-2 hover:bg-slate-800 rounded-full transition-colors">
-          <ArrowLeft className="w-6 h-6 text-slate-300" />
-        </Link>
-        <div className="text-center">
-          <h1 className="text-xl font-semibold">Voice Tutor</h1>
-          <p className="text-sm text-slate-400">
-            {isConnected ? 'Call in progress' : isConnecting ? 'Connecting...' : 'Ready to call'}
-          </p>
-        </div>
-        <div className="w-10" /> {/* Spacer */}
-      </header>
+    <div className="flex flex-col items-center justify-center px-6" style={{ minHeight: 'calc(100vh - 4rem)' }}>
+      <div className="flex flex-col items-center gap-12 w-full max-w-md">
+        {/* Orb */}
+        <VoiceOrb isConnected={isConnected} isConnecting={isConnecting} status={status} />
 
-      <main className="flex-1 flex flex-col items-center justify-center p-6 space-y-12">
-        
-        {/* Avatar / Visualizer */}
-        <div className="relative">
-          <div className={`w-48 h-48 rounded-full flex items-center justify-center transition-all duration-500 ${
-            isConnected 
-              ? 'bg-purple-600 shadow-[0_0_60px_rgba(147,51,234,0.5)]' 
-              : 'bg-slate-800'
-          }`}>
-            {isConnected ? (
-              <div className="flex space-x-2 items-center h-16">
-                <div className="w-2 bg-white rounded-full animate-[bounce_1s_infinite_0ms] h-8" />
-                <div className="w-2 bg-white rounded-full animate-[bounce_1s_infinite_200ms] h-16" />
-                <div className="w-2 bg-white rounded-full animate-[bounce_1s_infinite_400ms] h-12" />
-                <div className="w-2 bg-white rounded-full animate-[bounce_1s_infinite_600ms] h-6" />
-              </div>
-            ) : (
-              <Phone className="w-16 h-16 text-slate-600" />
-            )}
-          </div>
-          
-          {/* Pulse rings when connected */}
-          {isConnected && (
-            <>
-              <div className="absolute inset-0 rounded-full border-2 border-purple-500 animate-[ping_2s_cubic-bezier(0,0,0.2,1)_infinite]" />
-              <div className="absolute inset-0 rounded-full border-2 border-purple-400 animate-[ping_2.5s_cubic-bezier(0,0,0.2,1)_infinite_0.5s]" />
-            </>
-          )}
-        </div>
-
-        {/* Transcript Area (Optional, good for debugging/accessibility) */}
-        <div className="w-full max-w-md h-32 overflow-y-auto text-center space-y-2 px-4 scrollbar-hide">
-          {transcript.slice(-2).map((msg, idx) => (
-            <p key={idx} className={`text-sm ${msg.role === 'model' ? 'text-purple-300' : 'text-slate-400'}`}>
+        {/* Transcript */}
+        <div className="w-full h-28 overflow-y-auto scrollbar-hide text-center space-y-2 px-4">
+          {transcript.slice(-3).map((msg, idx) => (
+            <motion.p
+              key={idx}
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              className={`text-sm ${msg.role === 'model' ? 'text-foreground' : 'text-muted-foreground'}`}
+            >
               {msg.text}
-            </p>
+            </motion.p>
           ))}
           {!isConnected && !isConnecting && (
-            <p className="text-slate-500">Tap the phone button to start learning.</p>
+            <p className="text-sm text-muted-foreground">Tap the button below to start.</p>
           )}
         </div>
 
-      </main>
+        {/* Controls */}
+        <div className="flex items-center gap-6">
+          {isConnected ? (
+            <>
+              <button
+                onClick={() => setIsMuted(!isMuted)}
+                className={`p-4 rounded-full transition-colors ${
+                  isMuted ? 'bg-destructive/10 text-destructive' : 'bg-muted text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {isMuted ? <MicOff className="w-6 h-6" /> : <Mic className="w-6 h-6" />}
+              </button>
 
-      <footer className="p-8 pb-12 flex justify-center items-center space-x-8">
-        {isConnected ? (
-          <>
-            <button 
-              onClick={() => setIsMuted(!isMuted)}
-              className={`p-5 rounded-full transition-colors ${
-                isMuted ? 'bg-red-500/20 text-red-500' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-              }`}
+              <button
+                onClick={disconnect}
+                className="p-5 bg-destructive text-destructive-foreground rounded-full hover:bg-destructive/90 transition-colors shadow-lg"
+              >
+                <PhoneOff className="w-7 h-7" />
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={connect}
+              disabled={isConnecting}
+              className="p-5 bg-success text-success-foreground rounded-full hover:bg-success/90 transition-colors shadow-lg disabled:opacity-50"
             >
-              {isMuted ? <MicOff className="w-6 h-6" /> : <Mic className="w-6 h-6" />}
+              <Phone className="w-7 h-7" />
             </button>
-            
-            <button 
-              onClick={disconnect}
-              className="p-6 bg-red-600 text-white rounded-full hover:bg-red-700 transition-colors shadow-lg shadow-red-600/20"
-            >
-              <PhoneOff className="w-8 h-8" />
-            </button>
-            
-            <button 
-              className="p-5 bg-slate-800 text-slate-300 rounded-full hover:bg-slate-700 transition-colors"
-            >
-              <Volume2 className="w-6 h-6" />
-            </button>
-          </>
-        ) : (
-          <button 
-            onClick={connect}
-            disabled={isConnecting}
-            className="p-6 bg-green-600 text-white rounded-full hover:bg-green-700 transition-colors shadow-lg shadow-green-600/20 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <Phone className="w-8 h-8" />
-          </button>
-        )}
-      </footer>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
