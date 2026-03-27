@@ -22,49 +22,44 @@ const SYSTEM_PROMPT = `You are Taksh, an expert NCERT tutor for Indian students 
 - Keep responses concise but thorough (200-400 words max)
 - Use **bold** for key terms
 - Use numbered lists for steps
-- Add emojis sparingly for engagement (🎯, ✅, 💡, 📝)`;
+- Add emojis sparingly for engagement (🎯, ✅, 💡, 📝)
+
+## Voice Call Mode:
+- When in a voice call, keep responses SHORT (2-3 sentences max)
+- Speak naturally, as if talking to a student face to face
+- Avoid markdown formatting in voice mode — just plain conversational text`;
 
 export async function POST(request) {
   try {
-    const { message, history = [], topicContext } = await request.json();
+    const { message, history = [], topicContext, apiKey: clientKey, voiceMode } = await request.json();
 
-    if (!process.env.GEMINI_API_KEY) {
+    const geminiKey = clientKey || process.env.GEMINI_API_KEY;
+
+    if (!geminiKey) {
       return Response.json({
         response: getDemoResponse(message, topicContext),
         mode: 'demo',
       });
     }
 
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const genAI = new GoogleGenerativeAI(geminiKey);
     const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
-    // Sanitize history: Gemini requires alternating user/model roles
-    // and the first message must be from user
     const sanitized = [];
     for (const msg of history) {
       const role = msg.role === 'tutor' ? 'model' : 'user';
       const last = sanitized[sanitized.length - 1];
-
-      // Skip if same role as previous (merge or skip)
       if (last && last.role === role) {
-        // Merge content into previous message
         last.parts[0].text += '\n' + msg.content;
         continue;
       }
-
-      sanitized.push({
-        role,
-        parts: [{ text: msg.content }],
-      });
+      sanitized.push({ role, parts: [{ text: msg.content }] });
     }
 
-    // Gemini requires history to start with 'user' role
-    // Remove leading 'model' messages
     while (sanitized.length > 0 && sanitized[0].role === 'model') {
       sanitized.shift();
     }
 
-    // Remove the last entry if it's the current user message (we send it separately)
     if (sanitized.length > 0 && sanitized[sanitized.length - 1].role === 'user') {
       const lastUserText = sanitized[sanitized.length - 1].parts[0].text;
       if (lastUserText.includes(message)) {
@@ -72,23 +67,24 @@ export async function POST(request) {
       }
     }
 
-    // Ensure history still alternates after cleanup
-    // If it ends with 'user', that's fine for startChat, but let's be safe
     const cleanHistory = [];
     for (const entry of sanitized) {
       const last = cleanHistory[cleanHistory.length - 1];
-      if (last && last.role === entry.role) continue; // skip duplicates
+      if (last && last.role === entry.role) continue;
       cleanHistory.push(entry);
     }
 
-    // Must start with user
     while (cleanHistory.length > 0 && cleanHistory[0].role === 'model') {
       cleanHistory.shift();
     }
 
-    const contextPrefix = topicContext
+    let contextPrefix = topicContext
       ? `[Context: The student is studying ${topicContext.subject}, Class ${topicContext.classNumber}, Chapter: "${topicContext.chapterName}", Topic: "${topicContext.topicName}"]\n\n`
       : '';
+
+    if (voiceMode) {
+      contextPrefix += '[MODE: Voice call — keep responses very short, 2-3 sentences, conversational, no markdown]\n\n';
+    }
 
     const chat = model.startChat({
       history: cleanHistory,
@@ -102,7 +98,6 @@ export async function POST(request) {
   } catch (error) {
     console.error('Chat API error:', error.message || error);
 
-    // On Gemini errors, fall back to demo response
     try {
       const { message, topicContext } = await request.clone().json();
       return Response.json({
@@ -152,7 +147,7 @@ Now let's understand WHY this works the way it does...
 
 _Samajh aaya? Tell me your thoughts and I'll explain more! 😊_
 
-> ⚠️ **Note:** This is a demo response. Add your Gemini API key in \`.env.local\` for real AI tutoring!`;
+> ⚠️ **Note:** This is a demo response. Add your Gemini API key in Settings for real AI tutoring!`;
   }
 
   return `That's a great question! 🎯
@@ -169,5 +164,5 @@ Let me break this down for you step by step. In NCERT, this concept is explained
 
 _Just let me know! I'm here to help you understand completely. 😊_
 
-> ⚠️ **Demo mode** — Add your Gemini API key for real tutoring!`;
+> ⚠️ **Demo mode** — Add your Gemini API key in Settings for real tutoring!`;
 }

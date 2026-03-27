@@ -1,7 +1,7 @@
 'use client';
 import { useState, useRef, useEffect } from 'react';
 import Navbar from '@/components/Navbar';
-import { startListening, stopListening, speak, stopSpeaking, isSpeechSupported } from '@/lib/voice';
+import { startListening, stopListening, speak, stopSpeaking, isSpeechSupported, getGeminiKey } from '@/lib/voice';
 
 export default function CallPage() {
   const [state, setState] = useState('idle'); // idle | ringing | active | ended
@@ -134,7 +134,7 @@ export default function CallPage() {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, history: msgsRef.current.slice(-8), topicContext: null }),
+        body: JSON.stringify({ message: text, history: msgsRef.current.slice(-8), topicContext: null, apiKey: getGeminiKey(), voiceMode: true }),
       });
       const data = await res.json();
       add('tutor', data.response);
