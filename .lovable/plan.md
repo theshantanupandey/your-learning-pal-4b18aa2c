@@ -1,139 +1,47 @@
 
 
-# VidyAI — Complete UI Revamp + Fish Audio Integration
+# ElevenLabs Conversational AI Agent + Build Fix
 
-## Summary
+## Problem
+1. Build fails: no `build:dev` script in `package.json`
+2. Voice call page (`/call`) uses manual STT/TTS pipeline that doesn't work well
+3. Need to integrate ElevenLabs Conversational AI Agent (agent ID: `agent_4001kmrcsfkpfbdsgb049vbvw37f`) for a proper voice experience
 
-Redesign VidyAI from scratch with a clean, minimal Apple-inspired aesthetic, add Fish Audio TTS for cloned voice responses, add a Fish Audio API key field to settings, and include a simple progress overview on the home page.
+## Plan
 
----
+### 1. Fix build error
+Add `"build:dev": "next build"` to `package.json` scripts.
 
-## 1. Add Fish Audio API Key to Settings
+### 2. Link ElevenLabs connector
+Use `standard_connectors--connect` to link the existing `prod` ElevenLabs connection to the project, making the API key available as an environment variable.
 
-**File: `src/lib/apiKeys.ts`**
-- Add `fishAudio` field to `ApiKeyConfig`
-- Add `getFishAudioKey()` helper
+### 3. Install ElevenLabs React SDK
+Add `@elevenlabs/react` to dependencies for the `useConversation` hook.
 
-**File: `src/pages/ApiSettings.tsx`**
-- Add a second card for Fish Audio API key input (same pattern as Gemini)
+### 4. Update Settings page (`app/settings/page.js`)
+- Add a new section for "ElevenLabs Agent" with:
+  - A toggle: "Use Lovable Connector" (default ON when connector is linked) vs "Use Custom API Key"
+  - When custom: show API key input field and agent ID field
+  - Agent ID defaults to `agent_4001kmrcsfkpfbdsgb049vbvw37f`
+- Keep existing Gemini and TTS provider sections unchanged
 
----
+### 5. Rebuild Call page (`app/call/page.js`) with ElevenLabs Agent
+Replace the current manual STT + Gemini chat + Fish Audio TTS pipeline with the ElevenLabs `useConversation` React SDK:
 
-## 2. Complete UI Revamp — Clean Minimal Light
+- **Connection flow**: On "Start Call", request mic permission, then call `conversation.startSession({ agentId: "agent_4001kmrcsfkpfbdsgb049vbvw37f" })` using WebRTC (public agent, no server token needed)
+- **If user has a custom API key**: Create a Supabase edge function or Next.js API route to generate a `conversationToken`, then use that token instead of the raw agent ID
+- **UI stays similar**: Phone-style layout with the existing avatar, waveform, mute/end controls, and transcript panel
+- **Transcript**: Use `onMessage` callback to capture `user_transcript` and `agent_response` events and display them in the transcript panel
+- **Speaking indicator**: Use `conversation.isSpeaking` to drive the waveform animation
+- **Status**: Map `conversation.status` to the existing idle/ringing/active/ended states
 
-Aesthetic: Apple-inspired — generous whitespace, SF-style typography, soft shadows, subtle rounded corners, muted grays with a single accent color (indigo/blue). No gradients, no heavy borders.
+### 6. Keep fallback
+If ElevenLabs is not configured (no connector, no custom key), fall back to the existing Gemini + Fish Audio pipeline so the app still works.
 
-### 2a. Global Styles & Layout Shell
+## Technical Details
 
-**File: `src/index.css`**
-- Set base font to `Inter` (add Google Fonts import)
-- Light background `#FAFAFA`, text `#1A1A1A`
-- Accent: indigo-600 (`#4F46E5`)
-
-**File: `src/components/Layout.tsx`** (new)
-- Shared layout with a minimal top nav bar: VidyAI logo (text), nav links (Web Tutor, Voice Tutor), settings gear icon
-- Clean centered content area with max-width constraint
-
-### 2b. Home Page Redesign
-
-**File: `src/pages/Home.tsx`**
-- Hero section: large "VidyAI" wordmark, one-line subtitle, no icon clutter
-- Two mode cards: clean white cards with subtle hover lift, icon + title + one-line description + CTA button
-- Simple progress overview card at bottom: "Continue where you left off" showing last topic/session (pulled from localStorage for now, can connect to Supabase later)
-- Footer: settings link
-
-### 2c. Web Tutor Redesign
-
-**File: `src/pages/WebTutor.tsx`**
-- **Setup screen**: Cleaner form with pill-style selectors for class/subject, minimal input for topic, prominent "Start" button
-- **Chat screen**: 
-  - Sidebar-less, full-width chat with generous spacing
-  - Model messages: left-aligned, light gray background, clean markdown rendering
-  - User messages: right-aligned, indigo background, white text
-  - Input bar: fixed bottom, rounded pill input with mic button + send button
-  - Assessment panel: clean card with flashcards (swipeable, no 3D flip — simple fade transition) and quiz with radio buttons
-
-### 2d. Voice Tutor Redesign
-
-**File: `src/pages/VoiceTutor.tsx`**
-- Centered minimal layout: large circular avatar/waveform indicator
-- Status text underneath (Connecting... / Listening... / Speaking...)
-- Bottom controls: mute, end call — clean circular buttons
-- Transcript area: subtle scrolling text below the avatar
-- Integrate Fish Audio TTS for model responses (see section 3)
-
-### 2e. API Settings Redesign
-
-**File: `src/pages/ApiSettings.tsx`**
-- Clean card-based layout for each API key
-- Gemini card + Fish Audio card
-- Minimal form with show/hide toggle
-
----
-
-## 3. Fish Audio TTS Integration
-
-Fish Audio will be called client-side using the user's API key (stored in localStorage). This avoids needing an edge function for a hackathon demo.
-
-**File: `src/lib/fishAudio.ts`** (new)
-- `synthesizeSpeech(text: string, voiceId: string, apiKey: string): Promise<Blob>`
-- Calls Fish Audio TTS API: `POST https://api.fish.audio/v1/tts`
-- Returns audio blob for playback
-
-**Integration in VoiceTutor.tsx:**
-- After receiving text from Gemini Live API transcription, send it to Fish Audio TTS
-- Play the returned audio blob instead of (or alongside) Gemini's native audio
-- This gives the cloned voice output
-
-**Integration in WebTutor.tsx (optional):**
-- Add a speaker icon on model messages to read them aloud via Fish Audio
-
----
-
-## 4. New Component Structure
-
-```text
-src/
-├── components/
-│   ├── Layout.tsx           — shared nav + content wrapper
-│   ├── ChatMessage.tsx      — single message bubble
-│   ├── ChatInput.tsx        — input bar with mic + send
-│   ├── FlashcardDeck.tsx    — flashcard carousel
-│   ├── QuizPanel.tsx        — quiz questions + submit
-│   ├── ProgressCard.tsx     — simple overview card
-│   └── VoiceOrb.tsx         — animated circle for voice tutor
-├── lib/
-│   ├── apiKeys.ts           — updated with fishAudio
-│   ├── fishAudio.ts         — Fish Audio TTS client
-│   └── utils.ts
-├── pages/
-│   ├── Home.tsx
-│   ├── WebTutor.tsx
-│   ├── VoiceTutor.tsx
-│   └── ApiSettings.tsx
-└── App.tsx
-```
-
----
-
-## 5. Implementation Order
-
-1. Update `apiKeys.ts` + `ApiSettings.tsx` — add Fish Audio key support
-2. Create `Layout.tsx` and apply to all pages
-3. Revamp `Home.tsx` with new design + progress card
-4. Extract shared components (`ChatMessage`, `ChatInput`, `FlashcardDeck`, `QuizPanel`)
-5. Revamp `WebTutor.tsx` using new components
-6. Create `fishAudio.ts` TTS utility
-7. Create `VoiceOrb.tsx` animated component
-8. Revamp `VoiceTutor.tsx` with new design + Fish Audio TTS
-
----
-
-## Technical Notes
-
-- **Fish Audio API**: Direct client-side `fetch` to `https://api.fish.audio/v1/tts` with the user's API key in `Authorization: Bearer` header. The voice ID for the cloned voice will need to be configured (can add a field in settings or hardcode for hackathon).
-- **No backend changes needed** for Fish Audio — it's a direct API call with the user's key.
-- **Animations**: Use `framer-motion` (already installed as `motion`) for page transitions, card hover effects, and the voice orb pulse.
-- **Typography**: Inter font via Google Fonts CDN link in `index.html`.
-- **Responsive**: Mobile-first, works well at 375px+ and desktop 1129px.
+- The ElevenLabs agent `agent_4001kmrcsfkpfbdsgb049vbvw37f` is a public agent, so it can be used directly with `agentId` without server-side token generation
+- The `@elevenlabs/react` SDK handles WebRTC audio streaming, VAD, and playback internally
+- No changes needed to the Web Tutor (`/tutor`) — it continues using Gemini chat + optional Fish Audio TTS
+- Files changed: `package.json`, `app/call/page.js`, `app/settings/page.js`
 
