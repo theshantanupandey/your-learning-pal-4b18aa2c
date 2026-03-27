@@ -10,6 +10,8 @@ export default function SettingsPage() {
     fishVoiceId: '',
     elevenLabsKey: '',
     elevenLabsVoiceId: '',
+    elevenLabsAgentId: 'agent_4001kmrcsfkpfbdsgb049vbvw37f',
+    useElevenLabsConnector: true,
   });
   const [saved, setSaved] = useState(false);
   const [testing, setTesting] = useState({});
@@ -37,7 +39,6 @@ export default function SettingsPage() {
   const testKey = async (type) => {
     setTesting(prev => ({ ...prev, [type]: true }));
     setTestResults(prev => ({ ...prev, [type]: null }));
-
     try {
       if (type === 'gemini') {
         const res = await fetch('/api/test-key', {
@@ -48,29 +49,22 @@ export default function SettingsPage() {
         const data = await res.json();
         setTestResults(prev => ({ ...prev, [type]: data.success ? 'ok' : 'fail' }));
       } else if (type === 'tts') {
-        // Test whichever provider is selected
-        try {
-          const res = await fetch('/api/tts', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: 'Test.', provider: keys.ttsProvider }),
-          });
-          setTestResults(prev => ({ ...prev, [type]: res.ok ? 'ok' : 'fail' }));
-        } catch {
-          setTestResults(prev => ({ ...prev, [type]: 'fail' }));
-        }
+        const res = await fetch('/api/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: 'Test.', provider: keys.ttsProvider }),
+        });
+        setTestResults(prev => ({ ...prev, [type]: res.ok ? 'ok' : 'fail' }));
       }
     } catch {
       setTestResults(prev => ({ ...prev, [type]: 'fail' }));
     }
-
     setTesting(prev => ({ ...prev, [type]: false }));
   };
 
   return (
     <div className="page" style={{ paddingTop: 48 }}>
       <Navbar />
-
       <div style={s.container}>
         <div style={s.header}>
           <h1 style={s.title}>Settings</h1>
@@ -107,12 +101,57 @@ export default function SettingsPage() {
             </div>
           </div>
 
+          {/* ElevenLabs Agent */}
+          <div className="card" style={s.section}>
+            <div style={s.sectionHeader}>
+              <div>
+                <div style={s.sectionLabel}>ELEVENLABS VOICE AGENT</div>
+                <div style={s.sectionDesc}>Powers the voice call with "Sir Ji" — your AI tutor agent.</div>
+              </div>
+            </div>
+
+            {/* Connector vs Custom toggle */}
+            <div style={s.providerPicker}>
+              <button
+                style={{ ...s.providerBtn, ...(keys.useElevenLabsConnector ? s.providerBtnA : {}) }}
+                onClick={() => handleChange('useElevenLabsConnector', true)}
+              >
+                <div style={{ fontWeight: 600, fontSize: 13 }}>Lovable Connector</div>
+                <div style={{ fontSize: 11, color: '#555', marginTop: 2 }}>Uses linked ElevenLabs account</div>
+              </button>
+              <button
+                style={{ ...s.providerBtn, ...(!keys.useElevenLabsConnector ? s.providerBtnA : {}) }}
+                onClick={() => handleChange('useElevenLabsConnector', false)}
+              >
+                <div style={{ fontWeight: 600, fontSize: 13 }}>Custom API Key</div>
+                <div style={{ fontSize: 11, color: '#555', marginTop: 2 }}>Enter your own key</div>
+              </button>
+            </div>
+
+            <div style={s.fields}>
+              <div style={s.field}>
+                <label style={s.label}>Agent ID</label>
+                <input className="input mono" type="text" value={keys.elevenLabsAgentId} onChange={e => handleChange('elevenLabsAgentId', e.target.value)} placeholder="agent_..." style={s.fieldInput} />
+              </div>
+
+              {!keys.useElevenLabsConnector && (
+                <div style={s.field}>
+                  <label style={s.label}>API Key</label>
+                  <div style={s.inputWrap}>
+                    <input className="input mono" type={visible.elevenLabsKey ? 'text' : 'password'} value={keys.elevenLabsKey} onChange={e => handleChange('elevenLabsKey', e.target.value)} placeholder="sk_..." style={{ ...s.fieldInput, flex: 1 }} />
+                    <button className="btn btn-sm mono" onClick={() => setVisible(p => ({ ...p, elevenLabsKey: !p.elevenLabsKey }))} style={{ fontSize: 10, flexShrink: 0 }}>{visible.elevenLabsKey ? 'HIDE' : 'SHOW'}</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
           {/* TTS Provider */}
           <div className="card" style={s.section}>
             <div style={s.sectionHeader}>
               <div>
                 <div style={s.sectionLabel}>TEXT-TO-SPEECH</div>
-                <div style={s.sectionDesc}>Voice synthesis for Taksh. Choose a provider below.</div>
+                <div style={s.sectionDesc}>Voice synthesis for web tutor. Choose a provider below.</div>
               </div>
               <div style={s.headerActions}>
                 {testResults.tts && (
@@ -125,26 +164,16 @@ export default function SettingsPage() {
                 </button>
               </div>
             </div>
-
-            {/* Provider Selector */}
             <div style={s.providerPicker}>
-              <button
-                style={{ ...s.providerBtn, ...(keys.ttsProvider === 'elevenlabs' ? s.providerBtnA : {}) }}
-                onClick={() => handleChange('ttsProvider', 'elevenlabs')}
-              >
+              <button style={{ ...s.providerBtn, ...(keys.ttsProvider === 'elevenlabs' ? s.providerBtnA : {}) }} onClick={() => handleChange('ttsProvider', 'elevenlabs')}>
                 <div style={{ fontWeight: 600, fontSize: 13 }}>ElevenLabs</div>
                 <div style={{ fontSize: 11, color: '#555', marginTop: 2 }}>Multilingual v2 · High quality</div>
               </button>
-              <button
-                style={{ ...s.providerBtn, ...(keys.ttsProvider === 'fish' ? s.providerBtnA : {}) }}
-                onClick={() => handleChange('ttsProvider', 'fish')}
-              >
+              <button style={{ ...s.providerBtn, ...(keys.ttsProvider === 'fish' ? s.providerBtnA : {}) }} onClick={() => handleChange('ttsProvider', 'fish')}>
                 <div style={{ fontWeight: 600, fontSize: 13 }}>Fish Audio</div>
                 <div style={{ fontSize: 11, color: '#555', marginTop: 2 }}>Low latency · Balanced</div>
               </button>
             </div>
-
-            {/* ElevenLabs fields */}
             {keys.ttsProvider === 'elevenlabs' && (
               <div style={s.fields}>
                 <div style={s.field}>
@@ -160,8 +189,6 @@ export default function SettingsPage() {
                 </div>
               </div>
             )}
-
-            {/* Fish Audio fields */}
             {keys.ttsProvider === 'fish' && (
               <div style={s.fields}>
                 <div style={s.field}>
@@ -210,11 +237,9 @@ const s = {
   inputWrap: { display: 'flex', gap: 4, alignItems: 'center' },
   label: { fontSize: 12, fontWeight: 500, color: '#ccc' },
   fieldInput: { fontSize: 12 },
-
   providerPicker: { display: 'grid', gridTemplateColumns: '1fr 1fr', borderBottom: '1px solid #2a2a2a' },
   providerBtn: { padding: '14px 20px', background: 'transparent', border: 'none', borderRight: '1px solid #2a2a2a', cursor: 'pointer', textAlign: 'left', color: '#888', transition: 'all 100ms' },
   providerBtnA: { background: '#1a1a1a', color: '#fafafa', borderBottom: '2px solid #fafafa' },
-
   footer: { marginTop: 24, display: 'flex', alignItems: 'center', gap: 16 },
   saveBtn: { padding: '10px 24px' },
   footerNote: { fontSize: 12, color: '#555' },

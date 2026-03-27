@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@elevenlabs/elevenlabs-js": "^2.40.0",
+    "@elevenlabs/react": "^1.0.0",
     "@google/generative-ai": "^0.24.0",
     "@supabase/supabase-js": "^2.49.4",
     "next": "^15.3.1",
