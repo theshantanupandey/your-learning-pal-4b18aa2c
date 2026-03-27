@@ -1,16 +1,15 @@
-import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js';
-
 export async function POST(request) {
   try {
-    const { text, provider, voiceId } = await request.json();
+    const { text, provider, voiceId, apiKey: clientKey } = await request.json();
 
     // ── ElevenLabs ──
     if (provider === 'elevenlabs') {
-      const apiKey = process.env.ELEVENLABS_API_KEY;
+      const apiKey = clientKey || process.env.ELEVENLABS_API_KEY;
       if (!apiKey) {
-        return Response.json({ error: 'No ElevenLabs API key configured' }, { status: 400 });
+        return Response.json({ error: 'No ElevenLabs API key. Add it in Settings.' }, { status: 400 });
       }
 
+      const { ElevenLabsClient } = await import('@elevenlabs/elevenlabs-js');
       const elevenlabs = new ElevenLabsClient({ apiKey });
 
       const audio = await elevenlabs.textToSpeech.convert(
@@ -22,7 +21,6 @@ export async function POST(request) {
         }
       );
 
-      // The SDK returns a Readable stream, convert to buffer
       const chunks = [];
       for await (const chunk of audio) {
         chunks.push(chunk);
@@ -30,17 +28,14 @@ export async function POST(request) {
       const buffer = Buffer.concat(chunks);
 
       return new Response(buffer, {
-        headers: {
-          'Content-Type': 'audio/mpeg',
-          'Cache-Control': 'no-cache',
-        },
+        headers: { 'Content-Type': 'audio/mpeg', 'Cache-Control': 'no-cache' },
       });
     }
 
     // ── Fish Audio (default) ──
-    const apiKey = process.env.FISH_AUDIO_API_KEY;
+    const apiKey = clientKey || process.env.FISH_AUDIO_API_KEY;
     if (!apiKey) {
-      return Response.json({ error: 'No Fish Audio API key configured' }, { status: 400 });
+      return Response.json({ error: 'No Fish Audio API key. Add it in Settings.' }, { status: 400 });
     }
 
     const payload = {
@@ -67,10 +62,7 @@ export async function POST(request) {
 
     const audioBuffer = await response.arrayBuffer();
     return new Response(audioBuffer, {
-      headers: {
-        'Content-Type': 'audio/mpeg',
-        'Cache-Control': 'no-cache',
-      },
+      headers: { 'Content-Type': 'audio/mpeg', 'Cache-Control': 'no-cache' },
     });
   } catch (error) {
     console.error('TTS API error:', error);
