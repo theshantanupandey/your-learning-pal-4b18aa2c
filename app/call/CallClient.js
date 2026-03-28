@@ -2,19 +2,23 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useConversation } from '@elevenlabs/react';
 import Navbar from '@/components/Navbar';
+import { supabase } from '@/lib/supabase';
+
+const AGENT_ID = 'agent_4001kmrcsfkpfbdsgb049vbvw37f';
 
 export default function CallPage() {
   const [state, setState] = useState('idle'); // idle | ringing | active | ended
   const [messages, setMessages] = useState([]);
   const [duration, setDuration] = useState(0);
   const [muted, setMuted] = useState(false);
-  const [callLogs, setCallLogs] = useState([]);
-  const [agentId, setAgentId] = useState('agent_4001kmrcsfkpfbdsgb049vbvw37f');
 
   const timerRef = useRef(null);
   const msgsRef = useRef([]);
+  const stateRef = useRef('idle');
+  const sessionIdRef = useRef(null);
 
   useEffect(() => { msgsRef.current = messages; }, [messages]);
+  useEffect(() => { stateRef.current = state; }, [state]);
 
   useEffect(() => {
     if (state === 'active') {
@@ -23,25 +27,21 @@ export default function CallPage() {
     return () => clearInterval(timerRef.current);
   }, [state]);
 
-  // Load settings
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem('taksh_api_keys');
-      if (stored) {
-        const keys = JSON.parse(stored);
-        if (keys.elevenLabsAgentId) setAgentId(keys.elevenLabsAgentId);
-      }
-      const logs = localStorage.getItem('taksh_call_logs');
-      if (logs) setCallLogs(JSON.parse(logs));
-    } catch {}
-  }, []);
-
   const add = useCallback((role, content) => {
     setMessages(p => {
       const u = [...p, { role, content, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) }];
       msgsRef.current = u;
       return u;
     });
+    // Save to DB
+    if (sessionIdRef.current) {
+      supabase.from('messages').insert({
+        session_id: sessionIdRef.current,
+        role: role === 'student' ? 'student' : 'tutor',
+        content,
+        content_type: 'text',
+      }).then(() => {});
+    }
   }, []);
 
   const conversation = useConversation({
@@ -49,9 +49,17 @@ export default function CallPage() {
       setState('active');
     },
     onDisconnect: () => {
-      if (state !== 'idle') setState('ended');
+      if (stateRef.current !== 'idle') {
+        setState('ended');
+      }
       clearInterval(timerRef.current);
-      saveCallLog();
+      // Update session in DB
+      if (sessionIdRef.current) {
+        supabase.from('sessions').update({
+          status: 'completed',
+          completed_at: new Date().toISOString(),
+        }).eq('id', sessionIdRef.current).then(() => {});
+      }
     },
     onMessage: (message) => {
       if (message.type === 'user_transcript') {
@@ -70,22 +78,6 @@ export default function CallPage() {
     },
   });
 
-  const saveCallLog = () => {
-    if (msgsRef.current.length > 0) {
-      const log = {
-        id: Date.now(),
-        date: new Date().toISOString(),
-        duration,
-        messageCount: msgsRef.current.length,
-        transcript: msgsRef.current.map(m => ({ role: m.role, content: m.content, time: m.time })),
-        summary: msgsRef.current.filter(m => m.role === 'student').map(m => m.content).slice(0, 3).join(', ') || 'No student messages',
-      };
-      const updated = [log, ...callLogs].slice(0, 50);
-      setCallLogs(updated);
-      localStorage.setItem('taksh_call_logs', JSON.stringify(updated));
-    }
-  };
-
   const fmt = (s) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
 
   const startCall = async () => {
@@ -94,14 +86,32 @@ export default function CallPage() {
     setDuration(0);
     try {
       await navigator.mediaDevices.getUserMedia({ audio: true });
+
+      // Create session in DB
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        // Use a generic topic_id or find one
+        const { data: topics } = await supabase.from('topics').select('id').limit(1);
+        const topicId = topics?.[0]?.id;
+        if (topicId) {
+          const { data } = await supabase.from('sessions').insert({
+            user_id: user.id,
+            topic_id: topicId,
+            mode: 'call',
+            status: 'in_progress',
+          }).select('id').single();
+          if (data) sessionIdRef.current = data.id;
+        }
+      }
+
       await conversation.startSession({
-        agentId,
+        agentId: AGENT_ID,
         connectionType: 'webrtc',
       });
     } catch (err) {
       console.error('Failed to start:', err);
       setState('idle');
-      alert('Could not start call. Check microphone permissions and agent ID.');
+      alert('Could not start call. Check microphone permissions.');
     }
   };
 
@@ -113,7 +123,6 @@ export default function CallPage() {
 
   const toggleMute = () => {
     setMuted(m => !m);
-    // ElevenLabs SDK handles mute via volume
     try { conversation.setVolume({ volume: muted ? 1 : 0 }); } catch {}
   };
 
