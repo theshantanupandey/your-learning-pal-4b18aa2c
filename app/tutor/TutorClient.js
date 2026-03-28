@@ -1,12 +1,12 @@
 'use client';
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { useConversation } from '@elevenlabs/react';
 import Navbar from '@/components/Navbar';
 import NCERT_SYLLABUS from '@/lib/ncert-syllabus';
 import { supabase } from '@/lib/supabase';
 
-const CHAT_AGENT_ID = 'agent_5801kmspe84efe7te6t0821sktpv';
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
 export default function TutorClient() {
   const searchParams = useSearchParams();
@@ -21,8 +21,6 @@ export default function TutorClient() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [isConnected, setIsConnected] = useState(false);
-  const isConnectedRef = useRef(false);
 
   const [panel, setPanel] = useState('none');
   const [flashcards, setFlashcards] = useState([]);
@@ -37,6 +35,8 @@ export default function TutorClient() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const endRef = useRef(null);
   const sessionIdRef = useRef(null);
+  const chatHistoryRef = useRef([]); // conversation history for AI
+  const abortRef = useRef(null);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
@@ -68,136 +68,165 @@ export default function TutorClient() {
     } catch {}
   }, []);
 
-  // ElevenLabs text-only conversation with client tools for Supabase
-  const lastMsgRef = useRef('');
-  const connectingRef = useRef(false);
+  // Build student context for system prompt
+  const buildStudentContext = useCallback(async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return { is_new_student: true };
+      const { data: profile } = await supabase.from('users').select('*').eq('id', user.id).single();
+      if (!profile) return { is_new_student: true };
 
-  const conversation = useConversation({
-    onConnect: () => {
-      console.log('ElevenLabs chat connected');
-      setIsConnected(true);
-      isConnectedRef.current = true;
-      connectingRef.current = false;
-    },
-    onDisconnect: () => {
-      console.log('ElevenLabs chat disconnected');
-      setIsConnected(false);
-      isConnectedRef.current = false;
-      connectingRef.current = false;
-      setIsLoading(false);
-    },
-    onMessage: (message) => {
-      console.log('ElevenLabs message:', JSON.stringify(message));
-      // Extract text from all known response shapes
-      const text =
-        message?.agent_response_event?.agent_response
-        || (typeof message?.agent_response === 'string' ? message.agent_response.trim() : null)
-        || (message?.source === 'ai' && typeof message?.message === 'string' ? message.message.trim() : null);
-      if (text && text !== lastMsgRef.current) {
-        lastMsgRef.current = text;
-        setMessages(prev => [...prev, { role: 'tutor', content: text }]);
-        setIsLoading(false);
-        saveMessage('tutor', text);
+      const ctx = {
+        is_new_student: false,
+        student_name: profile.name,
+        student_class: profile.class_number,
+        student_board: profile.board || 'CBSE',
+        student_subjects: (profile.subjects || []).join(', '),
+      };
+
+      if (topicContext) {
+        ctx.current_topic = topicContext.topicName;
+        ctx.last_chapter = topicContext.chapterName;
       }
-    },
-    onError: (error) => {
-      console.error('ElevenLabs error:', error);
-      setMessages(prev => [...prev, { role: 'tutor', content: 'Connection error. Please try again.' }]);
-      setIsLoading(false);
-    },
-    clientTools: {
-      get_student_profile: async () => {
-        try {
-          const { data: { user } } = await supabase.auth.getUser();
-          if (!user) return JSON.stringify({ error: 'Not logged in' });
-          const { data } = await supabase.from('users').select('*').eq('id', user.id).single();
-          return JSON.stringify(data || { id: user.id, phone: user.phone });
-        } catch (e) { return JSON.stringify({ error: e.message }); }
-      },
-      get_chapter_progress: async (params) => {
-        try {
-          const { data: { user } } = await supabase.auth.getUser();
-          if (!user) return JSON.stringify({ error: 'Not logged in' });
-          let q = supabase.from('chapter_progress').select('*').eq('user_id', user.id);
-          if (params?.subject) q = q.eq('subject', params.subject);
-          if (params?.class_number) q = q.eq('class_number', params.class_number);
-          const { data } = await q;
-          return JSON.stringify(data || []);
-        } catch (e) { return JSON.stringify({ error: e.message }); }
-      },
-      get_session_history: async (params) => {
-        try {
-          const { data: { user } } = await supabase.auth.getUser();
-          if (!user) return JSON.stringify({ error: 'Not logged in' });
-          let q = supabase.from('sessions').select('*, topics(*)').eq('user_id', user.id).order('started_at', { ascending: false }).limit(params?.limit || 10);
-          const { data } = await q;
-          return JSON.stringify(data || []);
-        } catch (e) { return JSON.stringify({ error: e.message }); }
-      },
-      save_quiz_score: async (params) => {
-        try {
-          const { data: { user } } = await supabase.auth.getUser();
-          if (!user || !sessionIdRef.current) return JSON.stringify({ error: 'No active session' });
-          const { data } = await supabase.from('quiz_attempts').insert({
-            user_id: user.id,
-            session_id: sessionIdRef.current,
-            score_pct: params.score_pct,
-            level: params.level || 'medium',
-            questions: params.questions || [],
-            answers: params.answers || [],
-          }).select('id').single();
-          return JSON.stringify({ success: true, id: data?.id });
-        } catch (e) { return JSON.stringify({ error: e.message }); }
-      },
-    },
-  });
 
-  // Cleanup session on unmount
+      // Get last session info
+      const { data: lastSession } = await supabase.from('sessions')
+        .select('*, topics(*)')
+        .eq('user_id', user.id)
+        .eq('status', 'completed')
+        .order('completed_at', { ascending: false })
+        .limit(1);
+      if (lastSession?.[0]?.topics) {
+        ctx.last_topic = lastSession[0].topics.topic_name;
+        ctx.last_chapter = lastSession[0].topics.chapter_name;
+      }
+
+      return ctx;
+    } catch {
+      return { is_new_student: true };
+    }
+  }, [topicContext]);
+
+  // Stream chat from Lovable AI via edge function
+  const streamChat = useCallback(async (userMessage, currentMessages) => {
+    // Build the messages array for the API
+    const apiMessages = currentMessages
+      .filter(m => m.role === 'student' || m.role === 'tutor')
+      .map(m => ({
+        role: m.role === 'student' ? 'user' : 'assistant',
+        content: m.content,
+      }));
+
+    // Add the new user message
+    apiMessages.push({ role: 'user', content: userMessage });
+
+    const studentContext = await buildStudentContext();
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    const chatUrl = `${SUPABASE_URL}/functions/v1/chat`;
+    const resp = await fetch(chatUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+      },
+      body: JSON.stringify({ messages: apiMessages, studentContext }),
+      signal: controller.signal,
+    });
+
+    if (!resp.ok) {
+      const errorData = await resp.json().catch(() => ({}));
+      throw new Error(errorData.error || `HTTP ${resp.status}`);
+    }
+
+    if (!resp.body) throw new Error('No response body');
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let textBuffer = '';
+    let assistantSoFar = '';
+    let streamDone = false;
+
+    while (!streamDone) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      textBuffer += decoder.decode(value, { stream: true });
+
+      let newlineIndex;
+      while ((newlineIndex = textBuffer.indexOf('\n')) !== -1) {
+        let line = textBuffer.slice(0, newlineIndex);
+        textBuffer = textBuffer.slice(newlineIndex + 1);
+
+        if (line.endsWith('\r')) line = line.slice(0, -1);
+        if (line.startsWith(':') || line.trim() === '') continue;
+        if (!line.startsWith('data: ')) continue;
+
+        const jsonStr = line.slice(6).trim();
+        if (jsonStr === '[DONE]') { streamDone = true; break; }
+
+        try {
+          const parsed = JSON.parse(jsonStr);
+          const content = parsed.choices?.[0]?.delta?.content;
+          if (content) {
+            assistantSoFar += content;
+            setMessages(prev => {
+              const last = prev[prev.length - 1];
+              if (last?.role === 'tutor' && last?._streaming) {
+                return prev.map((m, i) => i === prev.length - 1 ? { ...m, content: assistantSoFar } : m);
+              }
+              return [...prev, { role: 'tutor', content: assistantSoFar, _streaming: true }];
+            });
+          }
+        } catch {
+          textBuffer = line + '\n' + textBuffer;
+          break;
+        }
+      }
+    }
+
+    // Flush remaining
+    if (textBuffer.trim()) {
+      for (let raw of textBuffer.split('\n')) {
+        if (!raw) continue;
+        if (raw.endsWith('\r')) raw = raw.slice(0, -1);
+        if (raw.startsWith(':') || raw.trim() === '') continue;
+        if (!raw.startsWith('data: ')) continue;
+        const jsonStr = raw.slice(6).trim();
+        if (jsonStr === '[DONE]') continue;
+        try {
+          const parsed = JSON.parse(jsonStr);
+          const content = parsed.choices?.[0]?.delta?.content;
+          if (content) assistantSoFar += content;
+        } catch {}
+      }
+    }
+
+    // Finalize the message (remove _streaming flag)
+    if (assistantSoFar) {
+      setMessages(prev => prev.map((m, i) =>
+        i === prev.length - 1 && m._streaming ? { role: 'tutor', content: assistantSoFar } : m
+      ));
+    }
+
+    return assistantSoFar;
+  }, [buildStudentContext]);
+
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
-      try { conversation.endSession(); } catch {}
-      isConnectedRef.current = false;
-      connectingRef.current = false;
+      if (abortRef.current) abortRef.current.abort();
     };
-  }, [conversation]);
-
-  // Start text-only session
-  const ensureConnected = useCallback(async () => {
-    if (isConnectedRef.current) return true;
-    if (connectingRef.current) {
-      // Already connecting, just wait
-      for (let i = 0; i < 25; i++) {
-        await new Promise(resolve => setTimeout(resolve, 200));
-        if (isConnectedRef.current) return true;
-      }
-      return false;
-    }
-    connectingRef.current = true;
-    try {
-      await conversation.startSession({
-        agentId: CHAT_AGENT_ID,
-        connectionType: 'websocket',
-      });
-      // Poll ref until connected (up to 5 seconds)
-      for (let i = 0; i < 25; i++) {
-        await new Promise(resolve => setTimeout(resolve, 200));
-        if (isConnectedRef.current) return true;
-      }
-      console.warn('Connection timeout');
-      connectingRef.current = false;
-      return false;
-    } catch (err) {
-      console.error('Failed to connect:', err);
-      connectingRef.current = false;
-      return false;
-    }
-  }, [conversation]);
+  }, []);
 
   const handleTopicSelect = async (cls, sub, ch, topic) => {
     const ctx = { classNumber: cls, subject: sub, chapterName: ch.name, chapterNumber: ch.chapter, topicName: topic };
     setTopicContext(ctx);
     setSelectedTopic(topic);
-    setMessages([{ role: 'tutor', content: `Let's learn "${topic}" — ${sub}, Class ${cls}, Ch ${ch.chapter}: ${ch.name}.` }]);
+    const initialMsg = { role: 'tutor', content: `Chalo "${topic}" padhte hain — ${sub}, Class ${cls}, Ch ${ch.chapter}: ${ch.name}.` };
+    setMessages([initialMsg]);
+    chatHistoryRef.current = [initialMsg];
     setPanel('none'); setQuizResult(null); setFlashcards([]); setQuizQs([]);
 
     // Find topic in DB for session creation
@@ -211,29 +240,31 @@ export default function TutorClient() {
       if (topics?.length) await createSession(topics[0].id);
     } catch {}
 
-    await ensureConnected();
-    sendMessage(`Explain "${topic}" from "${ch.name}", Class ${cls} ${sub}, step by step.`, ctx, []);
+    sendMessage(`Explain "${topic}" from "${ch.name}", Class ${cls} ${sub}, step by step.`, ctx, [initialMsg]);
   };
 
   const sendMessage = async (text, ctx, hist) => {
     const msg = text || input;
-    if (!msg.trim()) return;
-    const updated = [...(hist || messages), { role: 'student', content: msg }];
-    setMessages(updated); setInput(''); setIsLoading(true);
+    if (!msg.trim() || isLoading) return;
+    const currentMessages = hist || messages;
+    const updated = [...currentMessages, { role: 'student', content: msg }];
+    setMessages(updated);
+    setInput('');
+    setIsLoading(true);
 
     saveMessage('student', msg);
 
-    const connected = await ensureConnected();
-    if (!connected) {
-      setMessages(prev => [...prev, { role: 'tutor', content: 'Failed to connect. Please try again.' }]);
-      setIsLoading(false);
-      return;
-    }
     try {
-      await conversation.sendUserMessage(msg);
+      const aiResponse = await streamChat(msg, currentMessages);
+      if (aiResponse) {
+        saveMessage('tutor', aiResponse);
+      }
     } catch (err) {
-      console.error('Send error:', err);
-      setMessages(prev => [...prev, { role: 'tutor', content: 'Failed to send message. Please try again.' }]);
+      if (err.name !== 'AbortError') {
+        console.error('Chat error:', err);
+        setMessages(prev => [...prev, { role: 'tutor', content: `Error: ${err.message}. Please try again.` }]);
+      }
+    } finally {
       setIsLoading(false);
     }
   };
@@ -307,15 +338,10 @@ export default function TutorClient() {
         <main style={s.main}>
           {!sidebarOpen && <button style={s.openSide} onClick={() => setSidebarOpen(true)} className="btn btn-sm">☰ Syllabus</button>}
 
-          {/* Connection status */}
-          {isConnected && (
-            <div style={s.connBadge} className="mono">● CONNECTED</div>
-          )}
-
           {messages.length === 0 ? (
             <div style={s.empty}>
-              <div style={s.emptyMark} className="mono">T</div>
-              <h2 style={s.emptyH}>Taksh</h2>
+              <div style={s.emptyMark} className="mono">A</div>
+              <h2 style={s.emptyH}>Alakh AI</h2>
               <p style={s.emptyP}>Select a topic from the syllabus, or type what you want to learn.</p>
               <div style={s.hints}>
                 {['Explain photosynthesis', 'What are integers?', 'French Revolution'].map(h => (
@@ -327,13 +353,13 @@ export default function TutorClient() {
             <div style={s.msgs}>
               {messages.map((m, i) => (
                 <div key={i} style={{ ...s.msg, ...(m.role === 'student' ? s.msgStudent : s.msgTutor) }} className="fade-in">
-                  <div style={s.msgLabel} className="mono">{m.role === 'student' ? 'YOU' : 'TAKSH'}</div>
+                  <div style={s.msgLabel} className="mono">{m.role === 'student' ? 'YOU' : 'ALAKH SIR'}</div>
                   <div style={s.msgText} dangerouslySetInnerHTML={{ __html: fmtMd(m.content) }} />
                 </div>
               ))}
-              {isLoading && (
+              {isLoading && messages[messages.length - 1]?.role !== 'tutor' && (
                 <div style={{ ...s.msg, ...s.msgTutor }} className="fade-in">
-                  <div style={s.msgLabel} className="mono">TAKSH</div>
+                  <div style={s.msgLabel} className="mono">ALAKH SIR</div>
                   <div style={s.dots}><span style={{ ...s.dot, animationDelay: '0s' }} /><span style={{ ...s.dot, animationDelay: '0.15s' }} /><span style={{ ...s.dot, animationDelay: '0.3s' }} /></div>
                 </div>
               )}
@@ -449,7 +475,6 @@ const s = {
   treeTopic: { paddingLeft: 36, fontSize: 12, color: '#666', justifyContent: 'flex-start' },
   treeTopicA: { background: '#222', color: '#fafafa' },
   openSide: { position: 'absolute', top: 8, left: 8, zIndex: 10 },
-  connBadge: { position: 'absolute', top: 8, right: 8, zIndex: 10, fontSize: 10, color: '#4ade80', padding: '2px 8px', border: '1px solid #4ade8040', background: '#0a0a0a' },
 
   main: { flex: 1, display: 'flex', flexDirection: 'column', position: 'relative', overflow: 'hidden', background: '#111' },
   empty: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, padding: 32 },
