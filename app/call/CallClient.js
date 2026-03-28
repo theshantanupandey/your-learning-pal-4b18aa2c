@@ -165,14 +165,14 @@ export default function CallPage() {
         <div style={s.phoneWrap}>
           <div style={s.phone} className="card">
             <div style={s.barTop} className="mono">
-              <span>Sir Ji</span>
+              <span>Alakh AI</span>
               <span>{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
             </div>
 
             {state === 'idle' && (
               <div style={s.center}>
-                <div style={s.mark} className="mono">S</div>
-                <div style={s.name}>Sir Ji</div>
+                <div style={s.mark} className="mono">A</div>
+                <div style={s.name}>Alakh AI</div>
                 <div style={s.sub}>AI NCERT Tutor</div>
                 <div style={s.hint}>Tap to start a voice lesson</div>
                 <button style={s.callBtn} onClick={startCall} />
@@ -182,8 +182,8 @@ export default function CallPage() {
 
             {state === 'ringing' && (
               <div style={s.center}>
-                <div style={{ ...s.mark, animation: 'pulse 1s ease-in-out infinite' }} className="mono">S</div>
-                <div style={s.name}>Sir Ji</div>
+                <div style={{ ...s.mark, animation: 'pulse 1s ease-in-out infinite' }} className="mono">A</div>
+                <div style={s.name}>Alakh AI</div>
                 <div style={{ ...s.sub, color: '#4ade80' }} className="mono">CONNECTING...</div>
                 <button style={s.endBtn} onClick={endCall} />
               </div>
@@ -192,9 +192,9 @@ export default function CallPage() {
             {state === 'active' && (
               <div style={s.activeWrap}>
                 <div style={s.activeHead}>
-                  <div style={{ ...s.markSm, marginRight: 12 }} className="mono">S</div>
+                  <div style={{ ...s.markSm, marginRight: 12 }} className="mono">A</div>
                   <div>
-                    <div style={{ fontWeight: 600, fontSize: 14 }}>Sir Ji</div>
+                    <div style={{ fontWeight: 600, fontSize: 14 }}>Alakh AI</div>
                     <div className="mono" style={{ fontSize: 12, color: '#4ade80' }}>{fmt(duration)}</div>
                   </div>
                 </div>
@@ -227,7 +227,7 @@ export default function CallPage() {
 
             {state === 'ended' && (
               <div style={s.center}>
-                <div style={s.mark} className="mono">S</div>
+                <div style={s.mark} className="mono">A</div>
                 <div style={s.name}>Call Ended</div>
                 <div style={s.sub} className="mono">{fmt(duration)}</div>
                 <button style={s.callBtn} onClick={startCall} />
@@ -253,7 +253,7 @@ export default function CallPage() {
                 <div key={i} style={s.tMsg}>
                   <div style={s.tMsgHead}>
                     <span className="mono" style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.05em', color: m.role === 'tutor' ? '#888' : '#555' }}>
-                      {m.role === 'tutor' ? 'SIR JI' : 'YOU'}
+                      {m.role === 'tutor' ? 'ALAKH AI' : 'YOU'}
                     </span>
                     <span className="mono" style={{ fontSize: 10, color: '#333' }}>{m.time}</span>
                   </div>

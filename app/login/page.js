@@ -2,14 +2,25 @@
 import { useState } from 'react';
 import { supabase } from '@/lib/supabase';
 
+const CLASSES = [6, 7, 8, 9, 10];
+const BOARDS = ['CBSE', 'ICSE', 'State Board'];
+const SUBJECTS = ['Science', 'Mathematics', 'Social Science', 'English', 'Hindi'];
+
 export default function LoginPage() {
-  const [mode, setMode] = useState('email'); // 'email' | 'phone'
+  const [mode, setMode] = useState('email');
   const [phone, setPhone] = useState('+91');
   const [email, setEmail] = useState('');
   const [otp, setOtp] = useState('');
-  const [step, setStep] = useState('input'); // input | otp
+  const [step, setStep] = useState('input'); // input | otp | onboarding
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // Onboarding fields
+  const [authUser, setAuthUser] = useState(null);
+  const [name, setName] = useState('');
+  const [classNumber, setClassNumber] = useState(9);
+  const [board, setBoard] = useState('CBSE');
+  const [selectedSubjects, setSelectedSubjects] = useState(['Science', 'Mathematics']);
 
   const sendOtp = async () => {
     setLoading(true); setError('');
@@ -42,18 +53,39 @@ export default function LoginPage() {
       if (authData?.user) {
         const { data: existing } = await supabase.from('users').select('id').eq('id', authData.user.id).single();
         if (!existing) {
-          const userEmail = authData.user.email || (mode === 'phone' ? phone + '@phone.user' : email);
-          const userName = authData.user.email || phone;
-          await supabase.from('users').insert({
-            id: authData.user.id,
-            name: userName,
-            email: userEmail,
-            class_number: 9,
-            board: 'CBSE',
-            subjects: ['Science', 'Mathematics'],
-          });
+          // New user — go to onboarding
+          setAuthUser(authData.user);
+          setStep('onboarding');
+          setLoading(false);
+          return;
         }
       }
+      window.location.href = '/tutor';
+    } catch (e) {
+      setError(e.message); setLoading(false);
+    }
+  };
+
+  const toggleSubject = (sub) => {
+    setSelectedSubjects(prev =>
+      prev.includes(sub) ? prev.filter(s => s !== sub) : [...prev, sub]
+    );
+  };
+
+  const completeOnboarding = async () => {
+    if (!name.trim()) { setError('Please enter your name'); return; }
+    if (selectedSubjects.length === 0) { setError('Select at least one subject'); return; }
+    setLoading(true); setError('');
+    try {
+      const userEmail = authUser.email || (mode === 'phone' ? phone + '@phone.user' : email);
+      await supabase.from('users').insert({
+        id: authUser.id,
+        name: name.trim(),
+        email: userEmail,
+        class_number: classNumber,
+        board,
+        subjects: selectedSubjects,
+      });
       window.location.href = '/tutor';
     } catch (e) {
       setError(e.message); setLoading(false);
@@ -65,11 +97,11 @@ export default function LoginPage() {
   return (
     <div style={s.page}>
       <div style={s.card} className="card">
-        <div style={s.mark} className="mono">T</div>
-        <h1 style={s.title}>Taksh</h1>
+        <div style={s.mark} className="mono">A</div>
+        <h1 style={s.title}>Alakh AI</h1>
         <p style={s.sub}>AI NCERT Tutor · Classes 6–10</p>
 
-        {step === 'input' ? (
+        {step === 'input' && (
           <>
             <div style={s.toggle}>
               <button
@@ -113,7 +145,9 @@ export default function LoginPage() {
               {loading ? 'Sending...' : 'Send OTP'}
             </button>
           </>
-        ) : (
+        )}
+
+        {step === 'otp' && (
           <>
             <label style={s.label}>Enter OTP sent to {identifier}</label>
             <input
@@ -135,6 +169,69 @@ export default function LoginPage() {
           </>
         )}
 
+        {step === 'onboarding' && (
+          <>
+            <div style={s.onboardSection}>
+              <label style={s.label}>What's your name?</label>
+              <input
+                className="input"
+                value={name}
+                onChange={e => setName(e.target.value)}
+                placeholder="Your name"
+                style={s.input}
+                autoFocus
+              />
+            </div>
+
+            <div style={s.onboardSection}>
+              <label style={s.label}>Class</label>
+              <div style={s.optionRow}>
+                {CLASSES.map(c => (
+                  <button
+                    key={c}
+                    className="mono"
+                    style={classNumber === c ? s.optionActive : s.optionBtn}
+                    onClick={() => setClassNumber(c)}
+                  >{c}</button>
+                ))}
+              </div>
+            </div>
+
+            <div style={s.onboardSection}>
+              <label style={s.label}>Board</label>
+              <div style={s.optionRow}>
+                {BOARDS.map(b => (
+                  <button
+                    key={b}
+                    style={board === b ? s.optionActive : s.optionBtn}
+                    onClick={() => setBoard(b)}
+                  >{b}</button>
+                ))}
+              </div>
+            </div>
+
+            <div style={s.onboardSection}>
+              <label style={s.label}>Subjects (select one or more)</label>
+              <div style={{ ...s.optionRow, flexWrap: 'wrap' }}>
+                {SUBJECTS.map(sub => (
+                  <button
+                    key={sub}
+                    style={selectedSubjects.includes(sub) ? s.optionActive : s.optionBtn}
+                    onClick={() => toggleSubject(sub)}
+                  >{sub}</button>
+                ))}
+              </div>
+            </div>
+
+            <button className="btn btn-primary" onClick={completeOnboarding} disabled={loading} style={s.btn}>
+              {loading ? 'Setting up...' : 'Start Learning →'}
+            </button>
+            <button className="btn" onClick={() => { setStep('otp'); setError(''); }} style={{ ...s.btn, marginTop: 0 }}>
+              ← Back
+            </button>
+          </>
+        )}
+
         {error && <div style={s.error}>{error}</div>}
       </div>
     </div>
@@ -143,7 +240,7 @@ export default function LoginPage() {
 
 const s = {
   page: { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 },
-  card: { width: 360, padding: '48px 32px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 },
+  card: { width: 380, padding: '48px 32px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 },
   mark: { width: 48, height: 48, background: '#fafafa', color: '#0a0a0a', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, fontWeight: 700, marginBottom: 8 },
   title: { fontSize: 20, fontWeight: 600, marginBottom: 2 },
   sub: { fontSize: 12, color: '#555', marginBottom: 32 },
@@ -154,4 +251,8 @@ const s = {
   toggle: { display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid #333', marginBottom: 8 },
   toggleBtn: { flex: 1, padding: '6px 16px', fontSize: 12, background: 'transparent', color: '#888', border: 'none', cursor: 'pointer' },
   toggleActive: { flex: 1, padding: '6px 16px', fontSize: 12, background: '#fafafa', color: '#0a0a0a', border: 'none', cursor: 'pointer', fontWeight: 600 },
+  onboardSection: { width: '100%', marginTop: 8 },
+  optionRow: { display: 'flex', gap: 6, marginTop: 4 },
+  optionBtn: { padding: '6px 14px', fontSize: 12, background: 'transparent', color: '#888', border: '1px solid #333', cursor: 'pointer', borderRadius: 4 },
+  optionActive: { padding: '6px 14px', fontSize: 12, background: '#fafafa', color: '#0a0a0a', border: '1px solid #fafafa', cursor: 'pointer', borderRadius: 4, fontWeight: 600 },
 };
