@@ -145,19 +145,19 @@ export default function TutorClient() {
 
   // Start text-only session
   const ensureConnected = useCallback(async () => {
-    if (conversation.status === 'connected') return true;
+    if (isConnectedRef.current) return true;
     try {
       await conversation.startSession({
         agentId: CHAT_AGENT_ID,
         textOnly: true,
       });
-      // Poll until connected (up to 5 seconds)
+      // Poll ref until connected (up to 5 seconds)
       for (let i = 0; i < 25; i++) {
         await new Promise(resolve => setTimeout(resolve, 200));
-        if (conversation.status === 'connected') return true;
+        if (isConnectedRef.current) return true;
       }
-      console.warn('Connection timeout - attempting to send anyway');
-      return conversation.status === 'connected';
+      console.warn('Connection timeout');
+      return false;
     } catch (err) {
       console.error('Failed to connect:', err);
       return false;
