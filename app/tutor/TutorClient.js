@@ -142,14 +142,18 @@ export default function TutorClient() {
 
   // Start text-only session
   const ensureConnected = useCallback(async () => {
-    if (conversation.status === 'connected') return;
+    if (conversation.status === 'connected') return true;
     try {
       await conversation.startSession({
         agentId: CHAT_AGENT_ID,
         textOnly: true,
       });
+      // Wait a bit for connection to establish
+      await new Promise(resolve => setTimeout(resolve, 500));
+      return true;
     } catch (err) {
       console.error('Failed to connect:', err);
+      return false;
     }
   }, [conversation]);
 
