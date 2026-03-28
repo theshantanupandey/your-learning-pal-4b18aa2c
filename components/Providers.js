@@ -1,10 +1,11 @@
 'use client';
 import { ConversationProvider } from '@elevenlabs/react';
+import AuthGuard from '@/components/AuthGuard';
 
 export default function Providers({ children }) {
   return (
     <ConversationProvider>
-      {children}
+      <AuthGuard>{children}</AuthGuard>
     </ConversationProvider>
   );
 }
