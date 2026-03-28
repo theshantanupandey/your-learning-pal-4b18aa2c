@@ -22,6 +22,7 @@ export default function TutorClient() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
+  const isConnectedRef = useRef(false);
 
   const [panel, setPanel] = useState('none');
   const [flashcards, setFlashcards] = useState([]);
