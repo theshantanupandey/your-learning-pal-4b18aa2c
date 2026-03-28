@@ -69,16 +69,23 @@ export default function TutorClient() {
 
   // ElevenLabs text-only conversation with client tools for Supabase
   const conversation = useConversation({
-    onConnect: () => setIsConnected(true),
-    onDisconnect: () => setIsConnected(false),
+    onConnect: () => {
+      console.log('ElevenLabs chat connected');
+      setIsConnected(true);
+    },
+    onDisconnect: () => {
+      console.log('ElevenLabs chat disconnected');
+      setIsConnected(false);
+    },
     onMessage: (message) => {
-      if (message.type === 'agent_response') {
-        const text = message.agent_response_event?.agent_response;
-        if (text) {
-          setMessages(prev => [...prev, { role: 'tutor', content: text }]);
-          setIsLoading(false);
-          saveMessage('tutor', text);
-        }
+      console.log('ElevenLabs message:', JSON.stringify(message));
+      // Handle agent text response
+      const text = message?.agent_response_event?.agent_response
+        || message?.agent_response?.trim?.();
+      if (text) {
+        setMessages(prev => [...prev, { role: 'tutor', content: text }]);
+        setIsLoading(false);
+        saveMessage('tutor', text);
       }
     },
     onError: (error) => {
@@ -135,14 +142,18 @@ export default function TutorClient() {
 
   // Start text-only session
   const ensureConnected = useCallback(async () => {
-    if (conversation.status === 'connected') return;
+    if (conversation.status === 'connected') return true;
     try {
       await conversation.startSession({
         agentId: CHAT_AGENT_ID,
         textOnly: true,
       });
+      // Wait a bit for connection to establish
+      await new Promise(resolve => setTimeout(resolve, 500));
+      return true;
     } catch (err) {
       console.error('Failed to connect:', err);
+      return false;
     }
   }, [conversation]);
 
@@ -176,9 +187,14 @@ export default function TutorClient() {
 
     saveMessage('student', msg);
 
-    await ensureConnected();
+    const connected = await ensureConnected();
+    if (!connected) {
+      setMessages(prev => [...prev, { role: 'tutor', content: 'Failed to connect. Please try again.' }]);
+      setIsLoading(false);
+      return;
+    }
     try {
-      conversation.sendUserMessage(msg);
+      await conversation.sendUserMessage(msg);
     } catch (err) {
       console.error('Send error:', err);
       setMessages(prev => [...prev, { role: 'tutor', content: 'Failed to send message. Please try again.' }]);
