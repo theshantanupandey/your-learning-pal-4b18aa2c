@@ -187,9 +187,14 @@ export default function TutorClient() {
 
     saveMessage('student', msg);
 
-    await ensureConnected();
+    const connected = await ensureConnected();
+    if (!connected) {
+      setMessages(prev => [...prev, { role: 'tutor', content: 'Failed to connect. Please try again.' }]);
+      setIsLoading(false);
+      return;
+    }
     try {
-      conversation.sendUserMessage(msg);
+      await conversation.sendUserMessage(msg);
     } catch (err) {
       console.error('Send error:', err);
       setMessages(prev => [...prev, { role: 'tutor', content: 'Failed to send message. Please try again.' }]);
