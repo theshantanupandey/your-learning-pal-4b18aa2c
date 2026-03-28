@@ -69,23 +69,32 @@ export default function TutorClient() {
   }, []);
 
   // ElevenLabs text-only conversation with client tools for Supabase
+  const lastMsgRef = useRef('');
+  const connectingRef = useRef(false);
+
   const conversation = useConversation({
     onConnect: () => {
       console.log('ElevenLabs chat connected');
       setIsConnected(true);
       isConnectedRef.current = true;
+      connectingRef.current = false;
     },
     onDisconnect: () => {
       console.log('ElevenLabs chat disconnected');
       setIsConnected(false);
       isConnectedRef.current = false;
+      connectingRef.current = false;
+      setIsLoading(false);
     },
     onMessage: (message) => {
       console.log('ElevenLabs message:', JSON.stringify(message));
-      // Handle agent text response
-      const text = message?.agent_response_event?.agent_response
-        || message?.agent_response?.trim?.();
-      if (text) {
+      // Extract text from all known response shapes
+      const text =
+        message?.agent_response_event?.agent_response
+        || (typeof message?.agent_response === 'string' ? message.agent_response.trim() : null)
+        || (message?.source === 'ai' && typeof message?.message === 'string' ? message.message.trim() : null);
+      if (text && text !== lastMsgRef.current) {
+        lastMsgRef.current = text;
         setMessages(prev => [...prev, { role: 'tutor', content: text }]);
         setIsLoading(false);
         saveMessage('tutor', text);
@@ -143,13 +152,31 @@ export default function TutorClient() {
     },
   });
 
+  // Cleanup session on unmount
+  useEffect(() => {
+    return () => {
+      try { conversation.endSession(); } catch {}
+      isConnectedRef.current = false;
+      connectingRef.current = false;
+    };
+  }, [conversation]);
+
   // Start text-only session
   const ensureConnected = useCallback(async () => {
     if (isConnectedRef.current) return true;
+    if (connectingRef.current) {
+      // Already connecting, just wait
+      for (let i = 0; i < 25; i++) {
+        await new Promise(resolve => setTimeout(resolve, 200));
+        if (isConnectedRef.current) return true;
+      }
+      return false;
+    }
+    connectingRef.current = true;
     try {
       await conversation.startSession({
         agentId: CHAT_AGENT_ID,
-        textOnly: true,
+        connectionType: 'websocket',
       });
       // Poll ref until connected (up to 5 seconds)
       for (let i = 0; i < 25; i++) {
@@ -157,9 +184,11 @@ export default function TutorClient() {
         if (isConnectedRef.current) return true;
       }
       console.warn('Connection timeout');
+      connectingRef.current = false;
       return false;
     } catch (err) {
       console.error('Failed to connect:', err);
+      connectingRef.current = false;
       return false;
     }
   }, [conversation]);
