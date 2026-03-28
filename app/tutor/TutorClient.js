@@ -6,7 +6,7 @@ import Navbar from '@/components/Navbar';
 import NCERT_SYLLABUS from '@/lib/ncert-syllabus';
 import { supabase } from '@/lib/supabase';
 
-const AGENT_ID = 'agent_4001kmrcsfkpfbdsgb049vbvw37f';
+const CHAT_AGENT_ID = 'agent_5801kmspe84efe7te6t0821sktpv';
 
 export default function TutorClient() {
   const searchParams = useSearchParams();
@@ -67,7 +67,7 @@ export default function TutorClient() {
     } catch {}
   }, []);
 
-  // ElevenLabs text-only conversation
+  // ElevenLabs text-only conversation with client tools for Supabase
   const conversation = useConversation({
     onConnect: () => setIsConnected(true),
     onDisconnect: () => setIsConnected(false),
@@ -86,6 +86,51 @@ export default function TutorClient() {
       setMessages(prev => [...prev, { role: 'tutor', content: 'Connection error. Please try again.' }]);
       setIsLoading(false);
     },
+    clientTools: {
+      get_student_profile: async () => {
+        try {
+          const { data: { user } } = await supabase.auth.getUser();
+          if (!user) return JSON.stringify({ error: 'Not logged in' });
+          const { data } = await supabase.from('users').select('*').eq('id', user.id).single();
+          return JSON.stringify(data || { id: user.id, phone: user.phone });
+        } catch (e) { return JSON.stringify({ error: e.message }); }
+      },
+      get_chapter_progress: async (params) => {
+        try {
+          const { data: { user } } = await supabase.auth.getUser();
+          if (!user) return JSON.stringify({ error: 'Not logged in' });
+          let q = supabase.from('chapter_progress').select('*').eq('user_id', user.id);
+          if (params?.subject) q = q.eq('subject', params.subject);
+          if (params?.class_number) q = q.eq('class_number', params.class_number);
+          const { data } = await q;
+          return JSON.stringify(data || []);
+        } catch (e) { return JSON.stringify({ error: e.message }); }
+      },
+      get_session_history: async (params) => {
+        try {
+          const { data: { user } } = await supabase.auth.getUser();
+          if (!user) return JSON.stringify({ error: 'Not logged in' });
+          let q = supabase.from('sessions').select('*, topics(*)').eq('user_id', user.id).order('started_at', { ascending: false }).limit(params?.limit || 10);
+          const { data } = await q;
+          return JSON.stringify(data || []);
+        } catch (e) { return JSON.stringify({ error: e.message }); }
+      },
+      save_quiz_score: async (params) => {
+        try {
+          const { data: { user } } = await supabase.auth.getUser();
+          if (!user || !sessionIdRef.current) return JSON.stringify({ error: 'No active session' });
+          const { data } = await supabase.from('quiz_attempts').insert({
+            user_id: user.id,
+            session_id: sessionIdRef.current,
+            score_pct: params.score_pct,
+            level: params.level || 'medium',
+            questions: params.questions || [],
+            answers: params.answers || [],
+          }).select('id').single();
+          return JSON.stringify({ success: true, id: data?.id });
+        } catch (e) { return JSON.stringify({ error: e.message }); }
+      },
+    },
   });
 
   // Start text-only session
@@ -93,8 +138,8 @@ export default function TutorClient() {
     if (conversation.status === 'connected') return;
     try {
       await conversation.startSession({
-        agentId: AGENT_ID,
-        connectionType: 'webrtc',
+        agentId: CHAT_AGENT_ID,
+        textOnly: true,
       });
     } catch (err) {
       console.error('Failed to connect:', err);

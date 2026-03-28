@@ -5,7 +5,8 @@ import Navbar from '@/components/Navbar';
 import { supabase } from '@/lib/supabase';
 
 export default function SettingsPage() {
-  const [agentId, setAgentId] = useState('agent_4001kmrcsfkpfbdsgb049vbvw37f');
+  const [callAgentId, setCallAgentId] = useState('agent_4001kmrcsfkpfbdsgb049vbvw37f');
+  const [chatAgentId, setChatAgentId] = useState('agent_5801kmspe84efe7te6t0821sktpv');
   const [saved, setSaved] = useState(false);
   const [user, setUser] = useState(null);
   const router = useRouter();
@@ -15,14 +16,15 @@ export default function SettingsPage() {
     if (stored) {
       try {
         const keys = JSON.parse(stored);
-        if (keys.elevenLabsAgentId) setAgentId(keys.elevenLabsAgentId);
+        if (keys.callAgentId) setCallAgentId(keys.callAgentId);
+        if (keys.chatAgentId) setChatAgentId(keys.chatAgentId);
       } catch {}
     }
     supabase.auth.getUser().then(({ data: { user } }) => setUser(user));
   }, []);
 
   const handleSave = () => {
-    localStorage.setItem('taksh_api_keys', JSON.stringify({ elevenLabsAgentId: agentId }));
+    localStorage.setItem('taksh_api_keys', JSON.stringify({ callAgentId, chatAgentId }));
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
@@ -52,19 +54,24 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {/* ElevenLabs Agent */}
+        {/* ElevenLabs Agents */}
         <div className="card" style={{ ...s.section, marginTop: 1 }}>
           <div style={s.sectionHeader}>
             <div>
-              <div style={s.sectionLabel}>ELEVENLABS AGENT</div>
-              <div style={s.sectionDesc}>Powers both the chat tutor and voice calls.</div>
+              <div style={s.sectionLabel}>ELEVENLABS AGENTS</div>
+              <div style={s.sectionDesc}>Separate agents for chat and voice calls.</div>
             </div>
           </div>
           <div style={s.fields}>
             <div style={s.field}>
-              <label style={s.label}>Agent ID</label>
-              <input className="input mono" type="text" value={agentId} onChange={e => setAgentId(e.target.value)} placeholder="agent_..." style={s.fieldInput} />
-              <div style={{ fontSize: 11, color: '#555', marginTop: 4 }}>Default: agent_4001kmrcsfkpfbdsgb049vbvw37f (Sir Ji)</div>
+              <label style={s.label}>Voice Call Agent ID</label>
+              <input className="input mono" type="text" value={callAgentId} onChange={e => setCallAgentId(e.target.value)} placeholder="agent_..." style={s.fieldInput} />
+              <div style={{ fontSize: 11, color: '#555', marginTop: 4 }}>Default: agent_4001kmrcsfkpfbdsgb049vbvw37f (Sir Ji - Voice)</div>
+            </div>
+            <div style={s.field}>
+              <label style={s.label}>Chat Agent ID</label>
+              <input className="input mono" type="text" value={chatAgentId} onChange={e => setChatAgentId(e.target.value)} placeholder="agent_..." style={s.fieldInput} />
+              <div style={{ fontSize: 11, color: '#555', marginTop: 4 }}>Default: agent_5801kmspe84efe7te6t0821sktpv (Chat Tutor)</div>
             </div>
           </div>
         </div>

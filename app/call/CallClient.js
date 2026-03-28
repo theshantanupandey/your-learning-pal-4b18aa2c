@@ -53,7 +53,6 @@ export default function CallPage() {
         setState('ended');
       }
       clearInterval(timerRef.current);
-      // Update session in DB
       if (sessionIdRef.current) {
         supabase.from('sessions').update({
           status: 'completed',
@@ -75,6 +74,36 @@ export default function CallPage() {
       add('tutor', 'Connection error. Please try again.');
       setState('ended');
       clearInterval(timerRef.current);
+    },
+    clientTools: {
+      get_student_profile: async () => {
+        try {
+          const { data: { user } } = await supabase.auth.getUser();
+          if (!user) return JSON.stringify({ error: 'Not logged in' });
+          const { data } = await supabase.from('users').select('*').eq('id', user.id).single();
+          return JSON.stringify(data || { id: user.id, phone: user.phone });
+        } catch (e) { return JSON.stringify({ error: e.message }); }
+      },
+      get_chapter_progress: async (params) => {
+        try {
+          const { data: { user } } = await supabase.auth.getUser();
+          if (!user) return JSON.stringify({ error: 'Not logged in' });
+          let q = supabase.from('chapter_progress').select('*').eq('user_id', user.id);
+          if (params?.subject) q = q.eq('subject', params.subject);
+          if (params?.class_number) q = q.eq('class_number', params.class_number);
+          const { data } = await q;
+          return JSON.stringify(data || []);
+        } catch (e) { return JSON.stringify({ error: e.message }); }
+      },
+      get_session_history: async (params) => {
+        try {
+          const { data: { user } } = await supabase.auth.getUser();
+          if (!user) return JSON.stringify({ error: 'Not logged in' });
+          let q = supabase.from('sessions').select('*, topics(*)').eq('user_id', user.id).order('started_at', { ascending: false }).limit(params?.limit || 10);
+          const { data } = await q;
+          return JSON.stringify(data || []);
+        } catch (e) { return JSON.stringify({ error: e.message }); }
+      },
     },
   });
 
