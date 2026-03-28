@@ -22,6 +22,7 @@ export default function TutorClient() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
+  const isConnectedRef = useRef(false);
 
   const [panel, setPanel] = useState('none');
   const [flashcards, setFlashcards] = useState([]);
@@ -72,10 +73,12 @@ export default function TutorClient() {
     onConnect: () => {
       console.log('ElevenLabs chat connected');
       setIsConnected(true);
+      isConnectedRef.current = true;
     },
     onDisconnect: () => {
       console.log('ElevenLabs chat disconnected');
       setIsConnected(false);
+      isConnectedRef.current = false;
     },
     onMessage: (message) => {
       console.log('ElevenLabs message:', JSON.stringify(message));
@@ -142,15 +145,19 @@ export default function TutorClient() {
 
   // Start text-only session
   const ensureConnected = useCallback(async () => {
-    if (conversation.status === 'connected') return true;
+    if (isConnectedRef.current) return true;
     try {
       await conversation.startSession({
         agentId: CHAT_AGENT_ID,
         textOnly: true,
       });
-      // Wait a bit for connection to establish
-      await new Promise(resolve => setTimeout(resolve, 500));
-      return true;
+      // Poll ref until connected (up to 5 seconds)
+      for (let i = 0; i < 25; i++) {
+        await new Promise(resolve => setTimeout(resolve, 200));
+        if (isConnectedRef.current) return true;
+      }
+      console.warn('Connection timeout');
+      return false;
     } catch (err) {
       console.error('Failed to connect:', err);
       return false;
