@@ -78,6 +78,7 @@ export default function TutorClient() {
     onDisconnect: () => {
       console.log('ElevenLabs chat disconnected');
       setIsConnected(false);
+      isConnectedRef.current = false;
     },
     onMessage: (message) => {
       console.log('ElevenLabs message:', JSON.stringify(message));
