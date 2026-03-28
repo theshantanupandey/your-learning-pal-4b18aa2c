@@ -148,9 +148,13 @@ export default function TutorClient() {
         agentId: CHAT_AGENT_ID,
         textOnly: true,
       });
-      // Wait a bit for connection to establish
-      await new Promise(resolve => setTimeout(resolve, 500));
-      return true;
+      // Poll until connected (up to 5 seconds)
+      for (let i = 0; i < 25; i++) {
+        await new Promise(resolve => setTimeout(resolve, 200));
+        if (conversation.status === 'connected') return true;
+      }
+      console.warn('Connection timeout - attempting to send anyway');
+      return conversation.status === 'connected';
     } catch (err) {
       console.error('Failed to connect:', err);
       return false;
