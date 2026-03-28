@@ -69,16 +69,23 @@ export default function TutorClient() {
 
   // ElevenLabs text-only conversation with client tools for Supabase
   const conversation = useConversation({
-    onConnect: () => setIsConnected(true),
-    onDisconnect: () => setIsConnected(false),
+    onConnect: () => {
+      console.log('ElevenLabs chat connected');
+      setIsConnected(true);
+    },
+    onDisconnect: () => {
+      console.log('ElevenLabs chat disconnected');
+      setIsConnected(false);
+    },
     onMessage: (message) => {
-      if (message.type === 'agent_response') {
-        const text = message.agent_response_event?.agent_response;
-        if (text) {
-          setMessages(prev => [...prev, { role: 'tutor', content: text }]);
-          setIsLoading(false);
-          saveMessage('tutor', text);
-        }
+      console.log('ElevenLabs message:', JSON.stringify(message));
+      // Handle agent text response
+      const text = message?.agent_response_event?.agent_response
+        || message?.agent_response?.trim?.();
+      if (text) {
+        setMessages(prev => [...prev, { role: 'tutor', content: text }]);
+        setIsLoading(false);
+        saveMessage('tutor', text);
       }
     },
     onError: (error) => {
