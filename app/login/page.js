@@ -20,8 +20,23 @@ export default function LoginPage() {
   const verifyOtp = async () => {
     if (otp.length < 4) { setError('Enter the OTP'); return; }
     setLoading(true); setError('');
-    const { error: err } = await supabase.auth.verifyOtp({ phone, token: otp, type: 'sms' });
+    const { data: authData, error: err } = await supabase.auth.verifyOtp({ phone, token: otp, type: 'sms' });
     if (err) { setError(err.message); setLoading(false); return; }
+    
+    // Create user profile if first login
+    if (authData?.user) {
+      const { data: existing } = await supabase.from('users').select('id').eq('id', authData.user.id).single();
+      if (!existing) {
+        await supabase.from('users').insert({
+          id: authData.user.id,
+          name: phone,
+          email: phone + '@phone.user',
+          class_number: 9,
+          board: 'CBSE',
+          subjects: ['Science', 'Mathematics'],
+        });
+      }
+    }
     window.location.href = '/tutor';
   };
 
