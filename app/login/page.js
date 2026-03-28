@@ -3,42 +3,64 @@ import { useState } from 'react';
 import { supabase } from '@/lib/supabase';
 
 export default function LoginPage() {
+  const [mode, setMode] = useState('email'); // 'email' | 'phone'
   const [phone, setPhone] = useState('+91');
+  const [email, setEmail] = useState('');
   const [otp, setOtp] = useState('');
-  const [step, setStep] = useState('phone'); // phone | otp
+  const [step, setStep] = useState('input'); // input | otp
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   const sendOtp = async () => {
-    if (phone.length < 10) { setError('Enter a valid phone number'); return; }
     setLoading(true); setError('');
-    const { error: err } = await supabase.auth.signInWithOtp({ phone });
-    if (err) { setError(err.message); setLoading(false); return; }
-    setStep('otp'); setLoading(false);
+    try {
+      if (mode === 'phone') {
+        if (phone.length < 10) { setError('Enter a valid phone number'); setLoading(false); return; }
+        const { error: err } = await supabase.auth.signInWithOtp({ phone });
+        if (err) { setError(err.message); setLoading(false); return; }
+      } else {
+        if (!email || !email.includes('@')) { setError('Enter a valid email'); setLoading(false); return; }
+        const { error: err } = await supabase.auth.signInWithOtp({ email });
+        if (err) { setError(err.message); setLoading(false); return; }
+      }
+      setStep('otp'); setLoading(false);
+    } catch (e) {
+      setError(e.message); setLoading(false);
+    }
   };
 
   const verifyOtp = async () => {
     if (otp.length < 4) { setError('Enter the OTP'); return; }
     setLoading(true); setError('');
-    const { data: authData, error: err } = await supabase.auth.verifyOtp({ phone, token: otp, type: 'sms' });
-    if (err) { setError(err.message); setLoading(false); return; }
-    
-    // Create user profile if first login
-    if (authData?.user) {
-      const { data: existing } = await supabase.from('users').select('id').eq('id', authData.user.id).single();
-      if (!existing) {
-        await supabase.from('users').insert({
-          id: authData.user.id,
-          name: phone,
-          email: phone + '@phone.user',
-          class_number: 9,
-          board: 'CBSE',
-          subjects: ['Science', 'Mathematics'],
-        });
+    try {
+      const verifyPayload = mode === 'phone'
+        ? { phone, token: otp, type: 'sms' }
+        : { email, token: otp, type: 'email' };
+      const { data: authData, error: err } = await supabase.auth.verifyOtp(verifyPayload);
+      if (err) { setError(err.message); setLoading(false); return; }
+
+      if (authData?.user) {
+        const { data: existing } = await supabase.from('users').select('id').eq('id', authData.user.id).single();
+        if (!existing) {
+          const userEmail = authData.user.email || (mode === 'phone' ? phone + '@phone.user' : email);
+          const userName = authData.user.email || phone;
+          await supabase.from('users').insert({
+            id: authData.user.id,
+            name: userName,
+            email: userEmail,
+            class_number: 9,
+            board: 'CBSE',
+            subjects: ['Science', 'Mathematics'],
+          });
+        }
       }
+      window.location.href = '/tutor';
+    } catch (e) {
+      setError(e.message); setLoading(false);
     }
-    window.location.href = '/tutor';
   };
+
+  const identifier = mode === 'phone' ? phone : email;
 
   return (
     <div style={s.page}>
@@ -47,24 +69,53 @@ export default function LoginPage() {
         <h1 style={s.title}>Taksh</h1>
         <p style={s.sub}>AI NCERT Tutor · Classes 6–10</p>
 
-        {step === 'phone' ? (
+        {step === 'input' ? (
           <>
-            <label style={s.label}>Phone Number</label>
-            <input
-              className="input mono"
-              value={phone}
-              onChange={e => setPhone(e.target.value)}
-              placeholder="+91 9876543210"
-              style={s.input}
-              onKeyDown={e => e.key === 'Enter' && sendOtp()}
-            />
+            <div style={s.toggle}>
+              <button
+                style={mode === 'email' ? s.toggleActive : s.toggleBtn}
+                onClick={() => { setMode('email'); setError(''); }}
+              >Email</button>
+              <button
+                style={mode === 'phone' ? s.toggleActive : s.toggleBtn}
+                onClick={() => { setMode('phone'); setError(''); }}
+              >Phone</button>
+            </div>
+
+            {mode === 'phone' ? (
+              <>
+                <label style={s.label}>Phone Number</label>
+                <input
+                  className="input mono"
+                  value={phone}
+                  onChange={e => setPhone(e.target.value)}
+                  placeholder="+91 9876543210"
+                  style={s.input}
+                  onKeyDown={e => e.key === 'Enter' && sendOtp()}
+                />
+              </>
+            ) : (
+              <>
+                <label style={s.label}>Email Address</label>
+                <input
+                  className="input"
+                  type="email"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  style={s.input}
+                  onKeyDown={e => e.key === 'Enter' && sendOtp()}
+                />
+              </>
+            )}
+
             <button className="btn btn-primary" onClick={sendOtp} disabled={loading} style={s.btn}>
               {loading ? 'Sending...' : 'Send OTP'}
             </button>
           </>
         ) : (
           <>
-            <label style={s.label}>Enter OTP sent to {phone}</label>
+            <label style={s.label}>Enter OTP sent to {identifier}</label>
             <input
               className="input mono"
               value={otp}
@@ -78,8 +129,8 @@ export default function LoginPage() {
             <button className="btn btn-primary" onClick={verifyOtp} disabled={loading} style={s.btn}>
               {loading ? 'Verifying...' : 'Verify'}
             </button>
-            <button className="btn" onClick={() => { setStep('phone'); setOtp(''); setError(''); }} style={{ ...s.btn, marginTop: 0 }}>
-              ← Change Number
+            <button className="btn" onClick={() => { setStep('input'); setOtp(''); setError(''); }} style={{ ...s.btn, marginTop: 0 }}>
+              ← Back
             </button>
           </>
         )}
@@ -100,4 +151,7 @@ const s = {
   input: { width: '100%', fontSize: 14 },
   btn: { width: '100%', marginTop: 12, padding: '10px 0' },
   error: { marginTop: 12, fontSize: 12, color: '#f87171', textAlign: 'center' },
+  toggle: { display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid #333', marginBottom: 8 },
+  toggleBtn: { flex: 1, padding: '6px 16px', fontSize: 12, background: 'transparent', color: '#888', border: 'none', cursor: 'pointer' },
+  toggleActive: { flex: 1, padding: '6px 16px', fontSize: 12, background: '#fafafa', color: '#0a0a0a', border: 'none', cursor: 'pointer', fontWeight: 600 },
 };
