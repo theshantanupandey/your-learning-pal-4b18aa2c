@@ -1,35 +1,56 @@
 
+Goal: make chat reliably work with the chat-only ElevenLabs agent (`agent_5801kmspe84efe7te6t0821sktpv`) and remove deployment/config blockers.
 
-# Fix OTP Delivery + Add Fallback
+What I found
+- `app/tutor/TutorClient.js` already points to the correct chat agent ID.
+- The chat callback only parses `agent_response_event`/`agent_response`, but your live logs show messages in `{ source: "ai", role: "agent", message: "..." }` format, so valid replies can be ignored.
+- `textOnly` is currently passed to `startSession`; for this SDK pattern it should be configured on `useConversation(...)`.
+- No explicit chat-session cleanup on unmount, which can leave conversations “ongoing” on ElevenLabs.
+- `next.config.mjs` is already corrected (no `distDir`), so the remaining “dist not found” is Vercel project Output Directory config, not app code.
 
-## Root Cause
-Supabase Phone Auth returns 200 even when Twilio fails to deliver SMS. The delivery failure is silent — no errors in Supabase auth logs. This is a Twilio configuration issue, not a code issue.
+Implementation plan
+1) Harden Tutor chat session setup (chat-only mode)
+- File: `app/tutor/TutorClient.js`
+- Move text-chat mode to hook config: `useConversation({ textOnly: true, ... })`.
+- Start session with explicit `connectionType: 'websocket'` for text chat.
+- Keep chat agent locked to `agent_5801...` (and optionally read `chatAgentId` from settings as override with safe fallback).
+- Add a `connectingRef` guard so `startSession()` cannot run twice in parallel.
 
-## Diagnosis Steps (for the user)
-1. Check **Twilio Console → Monitor → Messaging → Logs** for failed delivery attempts
-2. If using a **trial account**: verify the target phone number in Twilio Console → Verified Caller IDs
-3. If sending to **India (+91)**: Twilio requires DLT registration for India. Without it, all SMS to Indian numbers are blocked by telecom regulations
+2) Fix incoming message parsing (primary chat bug)
+- File: `app/tutor/TutorClient.js`
+- Update `onMessage` parser to support all expected shapes:
+  - `message.agent_response_event?.agent_response`
+  - `message.agent_response`
+  - `message.message` when `source === 'ai'`
+- Normalize to one text extraction path before rendering/saving.
 
-## Plan
+3) Prevent duplicate AI messages and stuck loading
+- File: `app/tutor/TutorClient.js`
+- Track last handled event id/content (`event_id`) in a ref and ignore duplicates.
+- Ensure `setIsLoading(false)` runs after a valid AI response and on terminal error/disconnect paths so UI doesn’t hang.
 
-### Option A: Fix Twilio (recommended if you need phone OTP)
-- User verifies Twilio logs and fixes the delivery issue
-- No code changes needed — the current implementation is correct
+4) Close sessions cleanly so ElevenLabs doesn’t stay “ongoing”
+- File: `app/tutor/TutorClient.js`
+- Add `useEffect` cleanup to call `conversation.endSession()` on component unmount/route leave.
+- Reset connection refs/state in cleanup and disconnect handlers.
 
-### Option B: Add email OTP as fallback (code change)
-If Twilio SMS delivery can't be fixed quickly, update the login page to support **both email and phone** OTP:
+5) Keep call/chat agent separation explicit
+- Files: `app/tutor/TutorClient.js`, `app/call/CallClient.js` (if needed)
+- Ensure tutor uses chat agent only, call page uses call agent only (no cross-usage).
+- (Optional) centralize defaults in a tiny shared constant helper to avoid drift.
 
-**File: `app/login/page.js`**
-- Add a toggle between "Phone" and "Email" login
-- Email mode: calls `supabase.auth.signInWithOtp({ email })` — this uses Supabase's built-in email (no Twilio needed)
-- Phone mode: keeps current Twilio-based flow
-- Both modes use the same OTP verification step
+6) Resolve deployment blockers
+- Code side: keep `next.config.mjs` without `distDir`.
+- Vercel side (required): set Project → Build & Output Settings → Output Directory to default/empty (`.next` behavior for Next.js), not `dist`.
+- CSS lint error note: if your Vercel/project command includes a custom CSS lint step with empty file glob, remove/fix that command; `npm run build` for this Next app should not require a separate CSS file-list argument.
 
-This gives users a working login immediately while Twilio issues are resolved.
+Technical details
+- Root chat failure is event-shape mismatch, not wrong agent ID.
+- Root “ongoing conversation” symptom is missing lifecycle cleanup.
+- Root deploy “dist not found” is platform output-directory config mismatch, not Next build output.
 
-### Technical Details
-- `supabase.auth.signInWithOtp({ email })` works out of the box — Supabase sends the OTP via its built-in email service
-- For email verify: `supabase.auth.verifyOtp({ email, token, type: 'email' })`
-- The user profile creation logic stays the same, just uses `authData.user.email` instead of constructing a fake email from the phone number
-- No database changes needed
-
+Validation checklist (after changes)
+1. `/tutor`: send “hi” and verify one AI reply appears in UI and DB `messages`.
+2. Confirm no duplicate first reply (same `event_id` handled once).
+3. Navigate away from `/tutor`; ElevenLabs conversation should end (not remain ongoing).
+4. Redeploy on Vercel; build should complete with `.next` artifact and no `dist` output error.
