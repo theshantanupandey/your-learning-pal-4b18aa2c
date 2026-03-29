@@ -1,5 +1,6 @@
 'use client';
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { useConversation } from '@elevenlabs/react';
 import Navbar from '@/components/Navbar';
 import { supabase } from '@/lib/supabase';
@@ -7,18 +8,41 @@ import { supabase } from '@/lib/supabase';
 const AGENT_ID = 'agent_4001kmrcsfkpfbdsgb049vbvw37f';
 
 export default function CallPage() {
-  const [state, setState] = useState('idle'); // idle | ringing | active | ended
+  const router = useRouter();
+  const [state, setState] = useState('idle');
   const [messages, setMessages] = useState([]);
   const [duration, setDuration] = useState(0);
   const [muted, setMuted] = useState(false);
+  const [profileChecked, setProfileChecked] = useState(false);
 
   const timerRef = useRef(null);
   const msgsRef = useRef([]);
   const stateRef = useRef('idle');
   const sessionIdRef = useRef(null);
+  const transcriptEndRef = useRef(null);
 
   useEffect(() => { msgsRef.current = messages; }, [messages]);
   useEffect(() => { stateRef.current = state; }, [state]);
+
+  // Auto-scroll transcript
+  useEffect(() => {
+    transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  // Onboarding enforcement
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) { router.push('/login'); return; }
+        const { data: profile } = await supabase.from('users').select('id').eq('id', user.id).single();
+        if (!profile) { router.push('/login'); return; }
+        setProfileChecked(true);
+      } catch {
+        router.push('/login');
+      }
+    })();
+  }, [router]);
 
   useEffect(() => {
     if (state === 'active') {
@@ -33,7 +57,6 @@ export default function CallPage() {
       msgsRef.current = u;
       return u;
     });
-    // Save to DB
     if (sessionIdRef.current) {
       supabase.from('messages').insert({
         session_id: sessionIdRef.current,
@@ -61,12 +84,19 @@ export default function CallPage() {
       }
     },
     onMessage: (message) => {
+      // Handle multiple ElevenLabs message shapes
       if (message.type === 'user_transcript') {
         const text = message.user_transcription_event?.user_transcript;
         if (text) add('student', text);
       } else if (message.type === 'agent_response') {
         const text = message.agent_response_event?.agent_response;
         if (text) add('tutor', text);
+      }
+      // Fallback: source-based parsing
+      if (message.source === 'user' && message.message) {
+        add('student', message.message);
+      } else if (message.source === 'ai' && message.message) {
+        add('tutor', message.message);
       }
     },
     onError: (error) => {
@@ -116,10 +146,8 @@ export default function CallPage() {
     try {
       await navigator.mediaDevices.getUserMedia({ audio: true });
 
-      // Create session in DB
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
-        // Use a generic topic_id or find one
         const { data: topics } = await supabase.from('topics').select('id').limit(1);
         const topicId = topics?.[0]?.id;
         if (topicId) {
@@ -156,6 +184,15 @@ export default function CallPage() {
   };
 
   const isSpeaking = conversation.isSpeaking;
+
+  if (!profileChecked) {
+    return (
+      <div className="page" style={{ paddingTop: 48 }}>
+        <Navbar />
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 'calc(100vh - 48px)', color: '#555' }}>Loading...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="page" style={{ paddingTop: 48 }}>
@@ -260,6 +297,7 @@ export default function CallPage() {
                   <p style={{ fontSize: 13, color: '#ccc', lineHeight: 1.5 }}>{m.content}</p>
                 </div>
               ))}
+              <div ref={transcriptEndRef} />
             </div>
           )}
         </div>

@@ -1,7 +1,8 @@
 'use client';
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import Navbar from '@/components/Navbar';
+import Whiteboard from '@/components/Whiteboard';
 import NCERT_SYLLABUS from '@/lib/ncert-syllabus';
 import { supabase } from '@/lib/supabase';
 
@@ -10,6 +11,7 @@ const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
 export default function TutorClient() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const initialClass = searchParams.get('class') || '9';
 
   const [selectedClass, setSelectedClass] = useState(initialClass);
@@ -21,8 +23,9 @@ export default function TutorClient() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [profileChecked, setProfileChecked] = useState(false);
 
-  const [panel, setPanel] = useState('none');
+  const [panel, setPanel] = useState('none'); // none | flashcards | quiz | whiteboard
   const [flashcards, setFlashcards] = useState([]);
   const [cardIdx, setCardIdx] = useState(0);
   const [flipped, setFlipped] = useState(new Set());
@@ -35,20 +38,37 @@ export default function TutorClient() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const endRef = useRef(null);
   const sessionIdRef = useRef(null);
-  const chatHistoryRef = useRef([]); // conversation history for AI
+  const chatHistoryRef = useRef([]);
   const abortRef = useRef(null);
+  const userIdRef = useRef(null);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
+  // Onboarding enforcement: check profile exists
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) { router.push('/login'); return; }
+        userIdRef.current = user.id;
+        const { data: profile } = await supabase.from('users').select('id').eq('id', user.id).single();
+        if (!profile) { router.push('/login'); return; }
+        setProfileChecked(true);
+      } catch {
+        router.push('/login');
+      }
+    })();
+  }, [router]);
+
   // Save message to DB
-  const saveMessage = useCallback(async (role, content) => {
+  const saveMessage = useCallback(async (role, content, contentType = 'text') => {
     if (!sessionIdRef.current) return;
     try {
       await supabase.from('messages').insert({
         session_id: sessionIdRef.current,
         role,
         content,
-        content_type: 'text',
+        content_type: contentType,
       });
     } catch {}
   }, []);
@@ -89,7 +109,6 @@ export default function TutorClient() {
         ctx.last_chapter = topicContext.chapterName;
       }
 
-      // Get last session info
       const { data: lastSession } = await supabase.from('sessions')
         .select('*, topics(*)')
         .eq('user_id', user.id)
@@ -108,17 +127,18 @@ export default function TutorClient() {
   }, [topicContext]);
 
   // Stream chat from Lovable AI via edge function
-  const streamChat = useCallback(async (userMessage, currentMessages) => {
-    // Build the messages array for the API
+  const streamChat = useCallback(async (userMessage, currentMessages, imageData) => {
     const apiMessages = currentMessages
       .filter(m => m.role === 'student' || m.role === 'tutor')
       .map(m => ({
         role: m.role === 'student' ? 'user' : 'assistant',
         content: m.content,
+        ...(m.image ? { image: m.image } : {}),
       }));
 
-    // Add the new user message
-    apiMessages.push({ role: 'user', content: userMessage });
+    const newMsg = { role: 'user', content: userMessage };
+    if (imageData) newMsg.image = imageData;
+    apiMessages.push(newMsg);
 
     const studentContext = await buildStudentContext();
 
@@ -203,7 +223,7 @@ export default function TutorClient() {
       }
     }
 
-    // Finalize the message (remove _streaming flag)
+    // Finalize the message
     if (assistantSoFar) {
       setMessages(prev => prev.map((m, i) =>
         i === prev.length - 1 && m._streaming ? { role: 'tutor', content: assistantSoFar } : m
@@ -229,7 +249,6 @@ export default function TutorClient() {
     chatHistoryRef.current = [initialMsg];
     setPanel('none'); setQuizResult(null); setFlashcards([]); setQuizQs([]);
 
-    // Find topic in DB for session creation
     try {
       const { data: topics } = await supabase.from('topics')
         .select('id')
@@ -243,19 +262,21 @@ export default function TutorClient() {
     sendMessage(`Explain "${topic}" from "${ch.name}", Class ${cls} ${sub}, step by step.`, ctx, [initialMsg]);
   };
 
-  const sendMessage = async (text, ctx, hist) => {
+  const sendMessage = async (text, ctx, hist, imageData) => {
     const msg = text || input;
     if (!msg.trim() || isLoading) return;
     const currentMessages = hist || messages;
-    const updated = [...currentMessages, { role: 'student', content: msg }];
+    const newMsg = { role: 'student', content: msg };
+    if (imageData) newMsg.image = imageData;
+    const updated = [...currentMessages, newMsg];
     setMessages(updated);
     setInput('');
     setIsLoading(true);
 
-    saveMessage('student', msg);
+    saveMessage('student', msg, imageData ? 'image' : 'text');
 
     try {
-      const aiResponse = await streamChat(msg, currentMessages);
+      const aiResponse = await streamChat(msg, currentMessages, imageData);
       if (aiResponse) {
         saveMessage('tutor', aiResponse);
       }
@@ -267,6 +288,12 @@ export default function TutorClient() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // Whiteboard send handler
+  const handleWhiteboardSend = (dataUrl) => {
+    setPanel('none');
+    sendMessage('Maine whiteboard pe yeh likha hai, please check karo.', null, null, dataUrl);
   };
 
   const genFlashcards = async () => {
@@ -286,13 +313,47 @@ export default function TutorClient() {
     try {
       const r = await fetch('/api/quiz', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'evaluate', questions: quizQs, answers: quizQs.map((_, i) => quizAs[i] ?? -1), topicContext }) });
       const d = await r.json(); setQuizResult(d);
-      setMessages(prev => [...prev, { role: 'tutor', content: `Quiz: ${d.score}% (${d.correct}/${d.total}). ${d.feedback}` }]);
+
+      // Save quiz attempt to DB
+      if (userIdRef.current && sessionIdRef.current) {
+        try {
+          await supabase.from('quiz_attempts').insert({
+            user_id: userIdRef.current,
+            session_id: sessionIdRef.current,
+            questions: quizQs,
+            answers: quizQs.map((_, i) => quizAs[i] ?? -1),
+            score_pct: d.score,
+            level: 'topic',
+          });
+        } catch (e) { console.error('Failed to save quiz attempt:', e); }
+      }
+
+      // Show score in chat
+      const weakAreas = d.results?.filter(r => !r.isCorrect).map(r => r.question).slice(0, 3);
+      const scoreMsg = `Quiz complete: ${d.score}% (${d.correct}/${d.total}). ${d.feedback}`;
+      setMessages(prev => [...prev, { role: 'tutor', content: scoreMsg }]);
+      saveMessage('tutor', scoreMsg);
+
+      // Communicate score to AI for targeted feedback
+      const aiPrompt = `[SYSTEM: Student just scored ${d.score}% on the quiz (${d.correct}/${d.total} correct). ${weakAreas?.length ? `Weak areas: ${weakAreas.join('; ')}` : 'All correct!'}. React accordingly as per your teaching rules.]`;
+      sendMessage(aiPrompt);
     } catch {}
     setQuizLoading(false);
   };
 
   const syllabus = NCERT_SYLLABUS[selectedClass] || {};
   const subjects = Object.keys(syllabus);
+
+  if (!profileChecked) {
+    return (
+      <div className="page" style={{ paddingTop: 48 }}>
+        <Navbar />
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 'calc(100vh - 48px)', color: '#555' }}>
+          Loading...
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="page" style={{ paddingTop: 48 }}>
@@ -354,6 +415,7 @@ export default function TutorClient() {
               {messages.map((m, i) => (
                 <div key={i} style={{ ...s.msg, ...(m.role === 'student' ? s.msgStudent : s.msgTutor) }} className="fade-in">
                   <div style={s.msgLabel} className="mono">{m.role === 'student' ? 'YOU' : 'ALAKH SIR'}</div>
+                  {m.image && <img src={m.image} alt="whiteboard" style={{ maxWidth: 200, border: '1px solid #2a2a2a', marginBottom: 8 }} />}
                   <div style={s.msgText} dangerouslySetInnerHTML={{ __html: fmtMd(m.content) }} />
                 </div>
               ))}
@@ -372,6 +434,7 @@ export default function TutorClient() {
               <div style={s.chips}>
                 <button className="btn btn-sm" onClick={genFlashcards}>Flashcards</button>
                 <button className="btn btn-sm" onClick={genQuiz}>Quiz</button>
+                <button className="btn btn-sm" onClick={() => setPanel(panel === 'whiteboard' ? 'none' : 'whiteboard')}>✏ Whiteboard</button>
               </div>
             )}
             <div style={s.inputRow}>
@@ -384,59 +447,65 @@ export default function TutorClient() {
         {/* Right Panel */}
         {panel !== 'none' && (
           <aside style={s.rightPanel}>
-            <div style={s.panelHead}>
-              <span style={s.sideTitle} className="mono">{panel === 'flashcards' ? 'FLASHCARDS' : 'QUIZ'}</span>
-              <button style={s.closeBtn} onClick={() => setPanel('none')}>✕</button>
-            </div>
+            {panel === 'whiteboard' ? (
+              <Whiteboard onSend={handleWhiteboardSend} onClose={() => setPanel('none')} />
+            ) : (
+              <>
+                <div style={s.panelHead}>
+                  <span style={s.sideTitle} className="mono">{panel === 'flashcards' ? 'FLASHCARDS' : 'QUIZ'}</span>
+                  <button style={s.closeBtn} onClick={() => setPanel('none')}>✕</button>
+                </div>
 
-            {panel === 'flashcards' && (
-              <div style={s.fcWrap}>
-                {flashcards.length > 0 ? (
-                  <>
-                    <div className="card" style={s.fc} onClick={() => { const n = new Set(flipped); if (n.has(cardIdx)) n.delete(cardIdx); else n.add(cardIdx); setFlipped(n); }}>
-                      <div className="badge mono" style={{ marginBottom: 12 }}>{flashcards[cardIdx]?.difficulty}</div>
-                      <div style={s.fcText}>{flipped.has(cardIdx) ? flashcards[cardIdx]?.back : flashcards[cardIdx]?.front}</div>
-                      <div style={s.fcHint} className="mono">{flipped.has(cardIdx) ? 'ANSWER' : 'TAP TO REVEAL'}</div>
-                    </div>
-                    <div style={s.fcNav}>
-                      <button className="btn btn-sm" disabled={cardIdx === 0} onClick={() => setCardIdx(i => i - 1)}>← Prev</button>
-                      <span className="mono" style={{ fontSize: 12, color: '#555' }}>{cardIdx + 1}/{flashcards.length}</span>
-                      <button className="btn btn-sm" disabled={cardIdx >= flashcards.length - 1} onClick={() => setCardIdx(i => i + 1)}>Next →</button>
-                    </div>
-                  </>
-                ) : <div style={s.panelEmpty}>{isLoading ? 'Generating...' : 'No flashcards'}</div>}
-              </div>
-            )}
+                {panel === 'flashcards' && (
+                  <div style={s.fcWrap}>
+                    {flashcards.length > 0 ? (
+                      <>
+                        <div className="card" style={s.fc} onClick={() => { const n = new Set(flipped); if (n.has(cardIdx)) n.delete(cardIdx); else n.add(cardIdx); setFlipped(n); }}>
+                          <div className="badge mono" style={{ marginBottom: 12 }}>{flashcards[cardIdx]?.difficulty}</div>
+                          <div style={s.fcText}>{flipped.has(cardIdx) ? flashcards[cardIdx]?.back : flashcards[cardIdx]?.front}</div>
+                          <div style={s.fcHint} className="mono">{flipped.has(cardIdx) ? 'ANSWER' : 'TAP TO REVEAL'}</div>
+                        </div>
+                        <div style={s.fcNav}>
+                          <button className="btn btn-sm" disabled={cardIdx === 0} onClick={() => setCardIdx(i => i - 1)}>← Prev</button>
+                          <span className="mono" style={{ fontSize: 12, color: '#555' }}>{cardIdx + 1}/{flashcards.length}</span>
+                          <button className="btn btn-sm" disabled={cardIdx >= flashcards.length - 1} onClick={() => setCardIdx(i => i + 1)}>Next →</button>
+                        </div>
+                      </>
+                    ) : <div style={s.panelEmpty}>{isLoading ? 'Generating...' : 'No flashcards'}</div>}
+                  </div>
+                )}
 
-            {panel === 'quiz' && (
-              <div style={s.quizWrap}>
-                {quizLoading ? <div style={s.panelEmpty}>Generating quiz...</div> : quizResult ? (
-                  <div>
-                    <div style={s.scoreBox} className="card"><span className="mono" style={{ fontSize: 28, fontWeight: 700 }}>{quizResult.score}%</span><span style={{ fontSize: 12, color: '#888' }}>{quizResult.correct}/{quizResult.total} correct</span></div>
-                    <p style={{ fontSize: 13, color: '#888', margin: '12px 0', lineHeight: 1.5 }}>{quizResult.feedback}</p>
-                    {quizResult.results.map((r, i) => (
-                      <div key={i} style={{ ...s.resultRow, borderLeftColor: r.isCorrect ? '#4ade80' : '#f87171' }}>
-                        <div style={{ fontSize: 13, marginBottom: 4 }}>{r.question}</div>
-                        <div style={{ fontSize: 12, color: r.isCorrect ? '#4ade80' : '#f87171' }}>{r.isCorrect ? '✓ Correct' : `✗ ${r.correctAnswer}`}</div>
+                {panel === 'quiz' && (
+                  <div style={s.quizWrap}>
+                    {quizLoading ? <div style={s.panelEmpty}>Generating quiz...</div> : quizResult ? (
+                      <div>
+                        <div style={s.scoreBox} className="card"><span className="mono" style={{ fontSize: 28, fontWeight: 700 }}>{quizResult.score}%</span><span style={{ fontSize: 12, color: '#888' }}>{quizResult.correct}/{quizResult.total} correct</span></div>
+                        <p style={{ fontSize: 13, color: '#888', margin: '12px 0', lineHeight: 1.5 }}>{quizResult.feedback}</p>
+                        {quizResult.results.map((r, i) => (
+                          <div key={i} style={{ ...s.resultRow, borderLeftColor: r.isCorrect ? '#4ade80' : '#f87171' }}>
+                            <div style={{ fontSize: 13, marginBottom: 4 }}>{r.question}</div>
+                            <div style={{ fontSize: 12, color: r.isCorrect ? '#4ade80' : '#f87171' }}>{r.isCorrect ? '✓ Correct' : `✗ ${r.correctAnswer}`}</div>
+                          </div>
+                        ))}
+                        <button className="btn" style={{ width: '100%', marginTop: 12 }} onClick={genQuiz}>Retake</button>
+                      </div>
+                    ) : quizQs.map((q, qi) => (
+                      <div key={qi} className="card" style={s.qCard}>
+                        <div className="mono" style={{ fontSize: 11, color: '#555', marginBottom: 8 }}>Q{qi + 1}</div>
+                        <div style={{ fontSize: 13, marginBottom: 12, lineHeight: 1.5 }}>{q.question}</div>
+                        {q.options.map((o, oi) => (
+                          <button key={oi} style={{ ...s.optBtn, ...(quizAs[qi] === oi ? s.optSel : {}) }} onClick={() => setQuizAs(p => ({ ...p, [qi]: oi }))}>
+                            <span className="mono" style={s.optLetter}>{String.fromCharCode(65 + oi)}</span>{o}
+                          </button>
+                        ))}
                       </div>
                     ))}
-                    <button className="btn" style={{ width: '100%', marginTop: 12 }} onClick={genQuiz}>Retake</button>
+                    {quizQs.length > 0 && !quizResult && !quizLoading && (
+                      <button className="btn btn-primary" style={{ width: '100%', marginTop: 8 }} onClick={submitQuiz} disabled={Object.keys(quizAs).length < quizQs.length}>Submit ({Object.keys(quizAs).length}/{quizQs.length})</button>
+                    )}
                   </div>
-                ) : quizQs.map((q, qi) => (
-                  <div key={qi} className="card" style={s.qCard}>
-                    <div className="mono" style={{ fontSize: 11, color: '#555', marginBottom: 8 }}>Q{qi + 1}</div>
-                    <div style={{ fontSize: 13, marginBottom: 12, lineHeight: 1.5 }}>{q.question}</div>
-                    {q.options.map((o, oi) => (
-                      <button key={oi} style={{ ...s.optBtn, ...(quizAs[qi] === oi ? s.optSel : {}) }} onClick={() => setQuizAs(p => ({ ...p, [qi]: oi }))}>
-                        <span className="mono" style={s.optLetter}>{String.fromCharCode(65 + oi)}</span>{o}
-                      </button>
-                    ))}
-                  </div>
-                ))}
-                {quizQs.length > 0 && !quizResult && !quizLoading && (
-                  <button className="btn btn-primary" style={{ width: '100%', marginTop: 8 }} onClick={submitQuiz} disabled={Object.keys(quizAs).length < quizQs.length}>Submit ({Object.keys(quizAs).length}/{quizQs.length})</button>
                 )}
-              </div>
+              </>
             )}
           </aside>
         )}
